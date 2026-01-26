@@ -30,3 +30,4 @@ None
 
 - egui renders in-window menus; native menus are separate via muda
 - Mermaid CLI requires Node.js + npm install -g @mermaid-js/mermaid-cli
+- Native mermaid rendering disabled (upstream repo has Windows-incompatible paths)

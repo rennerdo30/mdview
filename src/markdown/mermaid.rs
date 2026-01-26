@@ -1,7 +1,8 @@
 //! Mermaid diagram rendering support
 //!
-//! This module provides rendering of Mermaid diagrams to PNG images.
-//! Supports native rendering (mermaid feature) and CLI fallback (mmdc).
+//! This module provides rendering of Mermaid diagrams to PNG images via CLI.
+//! Native rendering is disabled due to upstream repo issues on Windows.
+//! Install mermaid-cli for support: npm install -g @mermaid-js/mermaid-cli
 
 use std::sync::OnceLock;
 use std::process::Command;
@@ -22,7 +23,7 @@ fn check_mmdc_available() -> bool {
     *MMDC_AVAILABLE.get_or_init(|| {
         let available = is_mmdc_available();
         if available {
-            log::info!("mermaid-cli (mmdc) detected - will use for unsupported diagrams");
+            log::info!("mermaid-cli (mmdc) detected");
         } else {
             log::debug!("mermaid-cli (mmdc) not found - install with: npm install -g @mermaid-js/mermaid-cli");
         }
@@ -89,46 +90,9 @@ pub fn render_mermaid_via_cli(code: &str, scale: f32) -> Result<Vec<u8>, String>
     Ok(png_data)
 }
 
-/// Render mermaid code to PNG bytes using native renderer
-#[cfg(feature = "mermaid")]
-fn render_mermaid_native(code: &str, scale: f32) -> Result<Vec<u8>, String> {
-    use mermaid_rs_renderer::render as render_mermaid_svg;
-
-    // 1. Render to SVG using mermaid-rs-renderer
-    let svg_string = render_mermaid_svg(code)
-        .map_err(|e| format!("Mermaid parse error: {}", e))?;
-
-    // 2. Parse SVG with usvg
-    let opt = usvg::Options::default();
-    let tree = usvg::Tree::from_str(&svg_string, &opt)
-        .map_err(|e| format!("SVG parse error: {}", e))?;
-
-    // 3. Render to pixmap with resvg
-    let size = tree.size();
-    let width = (size.width() * scale) as u32;
-    let height = (size.height() * scale) as u32;
-
-    // Ensure minimum size
-    let width = width.max(1);
-    let height = height.max(1);
-
-    let mut pixmap = tiny_skia::Pixmap::new(width, height)
-        .ok_or("Failed to create pixmap")?;
-
-    // Fill with white background
-    pixmap.fill(tiny_skia::Color::WHITE);
-
-    let transform = tiny_skia::Transform::from_scale(scale, scale);
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-
-    // 4. Encode to PNG
-    pixmap.encode_png()
-        .map_err(|e| format!("PNG encode error: {}", e))
-}
-
 /// Render mermaid code to PNG bytes
 ///
-/// Tries native rendering first (fast), falls back to CLI if available.
+/// Uses mermaid-cli (mmdc) for rendering.
 ///
 /// # Arguments
 /// * `code` - The mermaid diagram source code
@@ -136,49 +100,14 @@ fn render_mermaid_native(code: &str, scale: f32) -> Result<Vec<u8>, String> {
 ///
 /// # Returns
 /// PNG image bytes on success, or an error message on failure
-#[cfg(feature = "mermaid")]
 pub fn render_mermaid_to_png(code: &str, scale: f32) -> Result<Vec<u8>, String> {
-    use std::panic;
-
-    // Try native rendering with panic protection
-    let code_owned = code.to_string();
-    let native_result = panic::catch_unwind(move || {
-        render_mermaid_native(&code_owned, scale)
-    });
-
-    match native_result {
-        Ok(Ok(png)) => {
-            log::debug!("Native mermaid renderer succeeded");
-            return Ok(png);
-        }
-        Ok(Err(e)) => {
-            log::debug!("Native mermaid failed: {}", e);
-        }
-        Err(_) => {
-            log::debug!("Native mermaid panicked (dagre_rust bug)");
-        }
-    }
-
-    // Try CLI fallback if available
-    if check_mmdc_available() {
-        log::debug!("Attempting mermaid-cli fallback...");
-        return render_mermaid_via_cli(code, scale);
-    }
-
-    Err("Mermaid rendering failed. Install mermaid-cli for better support: npm install -g @mermaid-js/mermaid-cli".to_string())
-}
-
-/// Fallback when mermaid feature is not enabled - try CLI only
-#[cfg(not(feature = "mermaid"))]
-pub fn render_mermaid_to_png(code: &str, scale: f32) -> Result<Vec<u8>, String> {
-    // Without native feature, only CLI is available
     if check_mmdc_available() {
         return render_mermaid_via_cli(code, scale);
     }
-    Err("Mermaid rendering not available. Either compile with --features mermaid or install mermaid-cli: npm install -g @mermaid-js/mermaid-cli".to_string())
+    Err("Mermaid rendering not available. Install mermaid-cli: npm install -g @mermaid-js/mermaid-cli".to_string())
 }
 
-/// Check if mermaid rendering is available (native or CLI)
+/// Check if mermaid rendering is available
 pub fn is_mermaid_available() -> bool {
-    cfg!(feature = "mermaid") || check_mmdc_available()
+    check_mmdc_available()
 }
