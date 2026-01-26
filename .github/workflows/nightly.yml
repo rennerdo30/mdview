@@ -1,0 +1,155 @@
+name: Nightly Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: mdview
+            asset_name: mdview-linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: mdview
+            asset_name: mdview-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: mdview
+            asset_name: mdview-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: mdview.exe
+            asset_name: mdview-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgtk-3-dev
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
+          chmod +x artifacts/${{ matrix.asset_name }}
+
+      - name: Prepare artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir artifacts
+          copy target\${{ matrix.target }}\release\${{ matrix.artifact_name }} artifacts\${{ matrix.asset_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: artifacts/${{ matrix.asset_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec mv {} release/ \;
+          ls -la release/
+
+      - name: Delete existing nightly release
+        uses: dev-drprasad/delete-tag-and-release@v1.1
+        with:
+          tag_name: nightly
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          delete_release: true
+        continue-on-error: true
+
+      - name: Get short SHA
+        id: sha
+        run: echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Get commit message
+        id: commit
+        run: echo "message=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
+
+      - name: Create nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly Build (${{ steps.sha.outputs.short_sha }})"
+          body: |
+            ## Nightly Build
+
+            **Commit:** ${{ github.sha }}
+            **Message:** ${{ steps.commit.outputs.message }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+
+            ---
+
+            This is an automated nightly build from the latest commit on the main branch.
+
+            ### Downloads
+
+            | Platform | Architecture | File |
+            |----------|-------------|------|
+            | Linux | x86_64 | `mdview-linux-x86_64` |
+            | macOS | x86_64 (Intel) | `mdview-macos-x86_64` |
+            | macOS | aarch64 (Apple Silicon) | `mdview-macos-aarch64` |
+            | Windows | x86_64 | `mdview-windows-x86_64.exe` |
+
+            ### Installation
+
+            **Linux/macOS:**
+            ```bash
+            chmod +x mdview-*
+            ./mdview-* your-file.md
+            ```
+
+            **Windows:**
+            ```powershell
+            .\mdview-windows-x86_64.exe your-file.md
+            ```
+
+            ---
+
+            > **Note:** This is a development build and may contain bugs.
+          prerelease: true
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

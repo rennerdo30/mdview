@@ -1,0 +1,25 @@
+# mdview Dark Theme
+
+[colors]
+background = "#1e1e1e"
+text = "#d4d4d4"
+heading = "#569cd6"
+link = "#4ec9b0"
+code_background = "#2d2d2d"
+code_text = "#ce9178"
+sidebar_background = "#252526"
+selection = "#264f78"
+
+[fonts]
+body = "sans-serif"
+heading = "sans-serif"
+code = "monospace"
+size = 14.0
+line_height = 1.5
+
+[spacing]
+paragraph = 12.0
+heading_top = 24.0
+heading_bottom = 8.0
+list_indent = 20.0
+code_padding = 8.0

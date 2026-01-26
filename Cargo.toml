@@ -1,0 +1,62 @@
+[package]
+name = "mdview"
+version = "0.1.0"
+edition = "2021"
+authors = ["mdview contributors"]
+description = "A fast, cross-platform GUI markdown viewer"
+license = "MIT"
+repository = "https://github.com/mdview/mdview"
+keywords = ["markdown", "viewer", "gui", "egui"]
+categories = ["command-line-utilities", "gui", "text-processing"]
+
+[dependencies]
+eframe = "0.29"
+egui = "0.29"
+pulldown-cmark = { version = "0.12", features = ["simd"] }
+notify = "7.0"
+notify-debouncer-mini = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+directories = "5.0"
+clap = { version = "4.5", features = ["derive"] }
+printpdf = "0.7"
+image = "0.25"
+parking_lot = "0.12"
+log = "0.4"
+env_logger = "0.11"
+sha2 = "0.10"
+hex = "0.4"
+open = "5.3"
+
+[dependencies.syntect]
+version = "5.2"
+optional = true
+default-features = false
+features = ["default-syntaxes", "default-themes", "regex-fancy"]
+
+[dependencies.mlua]
+version = "0.10"
+optional = true
+features = ["lua54", "vendored"]
+
+[features]
+default = ["syntax-highlighting"]
+syntax-highlighting = ["syntect"]
+plugins = ["mlua"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+tempfile = "3.17"
+
+[profile.dev]
+opt-level = 1
+
+[[bin]]
+name = "mdview"
+path = "src/main.rs"
