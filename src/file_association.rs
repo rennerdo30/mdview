@@ -278,73 +278,66 @@ fn register_windows() -> AssociationResult {
         None => return AssociationResult::Failed("Could not determine executable path".to_string()),
     };
 
-    // Create registry entries using reg.exe
-    // Note: This may require elevated permissions
+    // Windows 10/11 has hash-protected UserChoice key that prevents apps from
+    // directly setting themselves as default handlers. We need to:
+    // 1. Register our app's capabilities in the registry
+    // 2. Direct users to Windows Settings to complete the association
 
-    // Register application
-    let commands = [
-        // Register the application
-        format!(
-            r#"reg add "HKCU\Software\Classes\mdview.md" /ve /d "Markdown Document" /f"#
-        ),
-        format!(
-            r#"reg add "HKCU\Software\Classes\mdview.md\DefaultIcon" /ve /d "\"{}\"" /f"#,
-            exe_path
-        ),
-        format!(
-            r#"reg add "HKCU\Software\Classes\mdview.md\shell\open\command" /ve /d "\"{}\" \"%1\"" /f"#,
-            exe_path
-        ),
-        // Associate .md extension
-        format!(
-            r#"reg add "HKCU\Software\Classes\.md" /ve /d "mdview.md" /f"#
-        ),
-        // Associate .markdown extension
-        format!(
-            r#"reg add "HKCU\Software\Classes\.markdown" /ve /d "mdview.md" /f"#
-        ),
+    // Register ProgId with shell open command
+    let reg_commands = [
+        // Create ProgId for mdview
+        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md", "/ve", "/d", "Markdown Document", "/f"],
+        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\DefaultIcon", "/ve", "/d", &exe_path, "/f"],
+        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\shell\open\command", "/ve", "/d", &format!("\"{}\" \"%1\"", exe_path), "/f"],
+        // Register application capabilities
+        vec!["reg", "add", r"HKCU\Software\Classes\Applications\mdview.exe\shell\open\command", "/ve", "/d", &format!("\"{}\" \"%1\"", exe_path), "/f"],
+        // Set OpenWithProgIds to show mdview in "Open with" menu
+        vec!["reg", "add", r"HKCU\Software\Classes\.md\OpenWithProgIds", "/v", "mdview.md", "/t", "REG_NONE", "/f"],
+        vec!["reg", "add", r"HKCU\Software\Classes\.markdown\OpenWithProgIds", "/v", "mdview.md", "/t", "REG_NONE", "/f"],
     ];
 
-    for cmd in &commands {
-        let result = Command::new("cmd")
-            .args(["/C", cmd])
+    let mut all_succeeded = true;
+    for args in &reg_commands {
+        let result = Command::new(args[0])
+            .args(&args[1..])
             .output();
 
         match result {
             Ok(output) if output.status.success() => {
-                log::debug!("Registry command succeeded: {}", cmd);
+                log::debug!("Registry command succeeded");
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                // Check for access denied errors which indicate need for admin
-                if stderr.to_lowercase().contains("access")
-                    || stderr.to_lowercase().contains("denied")
-                    || output.status.code() == Some(5) // ERROR_ACCESS_DENIED
-                {
-                    return AssociationResult::Failed(
-                        "Access denied. Try running mdview as Administrator, or \
-                         manually set the default app in Windows Settings > Apps > Default apps."
-                            .to_string()
-                    );
-                }
-                return AssociationResult::Failed(format!(
-                    "Registry command failed (exit {}): {}",
-                    output.status.code().unwrap_or(-1),
-                    stderr
-                ));
+                log::warn!("Registry command failed: {}", stderr);
+                all_succeeded = false;
             }
             Err(e) => {
-                return AssociationResult::Failed(format!("Failed to run registry command: {}", e));
+                log::warn!("Failed to run registry command: {}", e);
+                all_succeeded = false;
             }
         }
     }
 
     // Notify shell of the change
-    let _ = Command::new("cmd")
-        .args(["/C", "ie4uinit.exe -show"])
+    let _ = Command::new("ie4uinit.exe")
+        .arg("-show")
         .output();
 
-    AssociationResult::Success
+    // Open Windows Settings to default apps page
+    // Due to UserChoice hash protection in Win10/11, users must manually select the app
+    let _ = Command::new("cmd")
+        .args(["/C", "start", "ms-settings:defaultapps"])
+        .output();
+
+    if all_succeeded {
+        AssociationResult::Success
+    } else {
+        AssociationResult::Failed(
+            "Registry updated, but some commands failed. \
+             Windows Settings has been opened - please search for '.md' and select mdview as the default app."
+                .to_string()
+        )
+    }
 }
 
 #[cfg(test)]

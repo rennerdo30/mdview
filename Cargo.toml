@@ -31,6 +31,10 @@ open = "5.3"
 rfd = "0.15"
 ureq = "2.9"
 muda = "0.15"
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation"] }
 
 [dependencies.syntect]
 version = "5.2"

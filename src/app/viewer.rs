@@ -241,6 +241,22 @@ impl MdViewApp {
         self.native_menu = menu;
     }
 
+    /// Initialize native menu for Windows (called on first frame when we have HWND)
+    #[cfg(windows)]
+    fn init_native_menu_windows(&mut self, frame: &eframe::Frame) {
+        use raw_window_handle::HasWindowHandle;
+
+        if let Some(ref mut menu) = self.native_menu {
+            if menu.needs_init() {
+                if let Ok(handle) = frame.window_handle() {
+                    if let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() {
+                        menu.init_for_hwnd(win32.hwnd.get() as isize);
+                    }
+                }
+            }
+        }
+    }
+
     /// Open a folder for browsing
     fn open_folder_dialog(&mut self) {
         if let Some(path) = rfd_open_folder() {
@@ -1476,7 +1492,12 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str) -> egui::Re
 }
 
 impl eframe::App for MdViewApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    #[allow(unused_variables)]
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Initialize native menu for Windows (must be done after window creation)
+        #[cfg(windows)]
+        self.init_native_menu_windows(frame);
+
         self.handle_file_events();
         self.handle_keyboard_shortcuts(ctx);
 

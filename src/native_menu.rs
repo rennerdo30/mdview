@@ -26,9 +26,12 @@ pub enum MenuAction {
 }
 
 /// Native menu bar manager
+#[allow(dead_code)]
 pub struct NativeMenuBar {
-    _menu: Menu,
+    menu: Menu,
     receiver: MenuEventReceiver,
+    #[cfg(windows)]
+    initialized: bool,
     // Store menu IDs for matching events
     open_id: muda::MenuId,
     open_folder_id: muda::MenuId,
@@ -163,8 +166,10 @@ impl NativeMenuBar {
         }
 
         Some(Self {
-            _menu: menu,
+            menu,
             receiver,
+            #[cfg(windows)]
+            initialized: false,
             open_id,
             open_folder_id,
             reload_id,
@@ -178,6 +183,32 @@ impl NativeMenuBar {
             about_id,
             check_updates_id,
         })
+    }
+
+    /// Initialize menu for Windows HWND (must be called after window creation)
+    #[cfg(windows)]
+    pub fn init_for_hwnd(&mut self, hwnd: isize) {
+        if !self.initialized {
+            use windows_sys::Win32::Foundation::HWND;
+            // Safety: hwnd comes from a valid window
+            unsafe {
+                self.menu.init_for_hwnd(hwnd as HWND);
+            }
+            self.initialized = true;
+            log::info!("Native menu initialized for Windows HWND");
+        }
+    }
+
+    /// Check if menu needs initialization (Windows only)
+    #[cfg(windows)]
+    pub fn needs_init(&self) -> bool {
+        !self.initialized
+    }
+
+    /// No-op on non-Windows platforms
+    #[cfg(not(windows))]
+    pub fn needs_init(&self) -> bool {
+        false
     }
 
     /// Poll for menu events (non-blocking)
