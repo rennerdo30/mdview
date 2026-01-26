@@ -63,6 +63,10 @@ struct Args {
     /// Config file path (default: ~/.config/mdview/config.toml)
     #[arg(short, long)]
     config: Option<PathBuf>,
+
+    /// Reset file association prompt (ask again on next launch)
+    #[arg(long)]
+    reset_file_association: bool,
 }
 
 /// Input type determined from CLI path
@@ -99,6 +103,10 @@ fn main() -> eframe::Result<()> {
     }
     if args.no_toc {
         config.general.show_toc = false;
+    }
+    if args.reset_file_association {
+        config.general.file_association_asked = false;
+        log::info!("File association prompt reset - will ask on next dialog");
     }
     config.general.theme = args.theme.clone();
 
