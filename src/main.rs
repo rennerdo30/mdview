@@ -1,3 +1,6 @@
+// Hide console window on Windows in release builds
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! mdview - High-Performance Extensible Markdown Viewer
 //!
 //! A fast, cross-platform GUI markdown viewer built with egui.
