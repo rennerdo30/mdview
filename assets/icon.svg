@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6"/>
+      <stop offset="100%" style="stop-color:#1D4ED8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect x="8" y="8" width="112" height="112" rx="20" ry="20" fill="url(#iconGrad)"/>
+
+  <!-- Simplified M -->
+  <path d="M 28 92 L 28 36 L 44 36 L 64 60 L 84 36 L 100 36 L 100 92 L 84 92 L 84 60 L 68 80 L 60 80 L 44 60 L 44 92 Z"
+        fill="#FFFFFF"/>
+</svg>

@@ -1,6 +1,10 @@
 //! Markdown parser using pulldown-cmark
 
+#![allow(dead_code)]
+
 use pulldown_cmark::{Event, Options, Parser, Tag, HeadingLevel, CodeBlockKind};
+
+use crate::config::Config;
 
 /// Parse markdown content into events
 pub fn parse(content: &str) -> Parser<'_> {
@@ -9,6 +13,31 @@ pub fn parse(content: &str) -> Parser<'_> {
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_HEADING_ATTRIBUTES;
+
+    Parser::new_ext(content, options)
+}
+
+/// Parse markdown content into events with configuration
+pub fn parse_with_config<'a>(content: &'a str, config: &Config) -> Parser<'a> {
+    let mut options = Options::empty();
+
+    if config.markdown.tables {
+        options |= Options::ENABLE_TABLES;
+    }
+    if config.markdown.footnotes {
+        options |= Options::ENABLE_FOOTNOTES;
+    }
+    if config.markdown.strikethrough {
+        options |= Options::ENABLE_STRIKETHROUGH;
+    }
+    if config.markdown.task_lists {
+        options |= Options::ENABLE_TASKLISTS;
+    }
+    if config.markdown.smart_punctuation {
+        options |= Options::ENABLE_SMART_PUNCTUATION;
+    }
+    // Always enable heading attributes
+    options |= Options::ENABLE_HEADING_ATTRIBUTES;
 
     Parser::new_ext(content, options)
 }

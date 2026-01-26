@@ -4,4 +4,6 @@
 
 pub mod pdf;
 
+// Public API re-exports
+#[allow(unused_imports)]
 pub use pdf::export_to_pdf;

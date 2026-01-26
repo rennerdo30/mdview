@@ -1,11 +1,11 @@
 //! Configuration schema definitions
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct Config {
     pub general: GeneralConfig,
     pub window: WindowConfig,
@@ -16,19 +16,6 @@ pub struct Config {
     pub theme: ThemeConfig,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            window: WindowConfig::default(),
-            markdown: MarkdownConfig::default(),
-            annotations: AnnotationsConfig::default(),
-            export: ExportConfig::default(),
-            keybindings: KeybindingsConfig::default(),
-            theme: ThemeConfig::default(),
-        }
-    }
-}
 
 /// General application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +32,18 @@ pub struct GeneralConfig {
 
     /// Default TOC sidebar width
     pub toc_width: u32,
+
+    /// Whether we've asked about file association (None = never asked)
+    pub file_association_asked: bool,
+
+    /// Whether mdview is registered as default .md handler
+    pub file_association_enabled: bool,
+
+    /// Check for updates on startup
+    pub check_for_updates: bool,
+
+    /// Version that was dismissed for update notification
+    pub dismissed_update_version: Option<String>,
 }
 
 impl Default for GeneralConfig {
@@ -54,6 +53,10 @@ impl Default for GeneralConfig {
             hot_reload: true,
             show_toc: true,
             toc_width: 250,
+            file_association_asked: false,
+            file_association_enabled: false,
+            check_for_updates: true,
+            dismissed_update_version: None,
         }
     }
 }
@@ -177,7 +180,11 @@ pub struct KeybindingsConfig {
     pub export_pdf: String,
     pub reload: String,
     pub open_file: String,
+    pub open_folder: String,
     pub quit: String,
+    pub add_annotation: String,
+    pub add_bookmark: String,
+    pub toggle_file_browser: String,
 }
 
 impl Default for KeybindingsConfig {
@@ -187,7 +194,11 @@ impl Default for KeybindingsConfig {
             export_pdf: "Ctrl+P".to_string(),
             reload: "F5".to_string(),
             open_file: "Ctrl+O".to_string(),
+            open_folder: "Ctrl+Shift+O".to_string(),
             quit: "Ctrl+Q".to_string(),
+            add_annotation: "Ctrl+H".to_string(),
+            add_bookmark: "Ctrl+B".to_string(),
+            toggle_file_browser: "Ctrl+E".to_string(),
         }
     }
 }

@@ -1,5 +1,7 @@
 //! TOC builder - extracts headings from markdown
 
+#![allow(dead_code)]
+
 use pulldown_cmark::{Event, Tag, TagEnd};
 
 use crate::markdown::parser;
@@ -111,49 +113,42 @@ fn build_tree(flat: &[TocEntry]) -> Vec<TocEntry> {
         return Vec::new();
     }
 
-    let mut result = Vec::new();
-    let mut stack: Vec<TocEntry> = Vec::new();
+    let mut result: Vec<TocEntry> = Vec::new();
+    // Stack stores (entry, level) pairs where entry is being built
+    // We use indices to track where to insert children
+    let mut stack: Vec<(TocEntry, usize)> = Vec::new();
 
     for entry in flat {
         let mut new_entry = entry.clone();
         new_entry.children = Vec::new();
+        let level = entry.level;
 
-        // Pop entries from stack until we find a parent or stack is empty
-        while let Some(top) = stack.last() {
-            if top.level < entry.level {
+        // Pop entries with level >= current level and attach them to their parents
+        while let Some((_, top_level)) = stack.last() {
+            if *top_level < level {
+                // Found a parent, stop popping
                 break;
             }
-            let popped = stack.pop().unwrap();
-
-            if let Some(parent) = stack.last_mut() {
+            // Pop this entry and add to parent or result
+            let (popped, _) = stack.pop().unwrap();
+            if let Some((parent, _)) = stack.last_mut() {
                 parent.children.push(popped);
             } else {
                 result.push(popped);
             }
         }
 
-        stack.push(new_entry);
+        stack.push((new_entry, level));
     }
 
-    // Empty remaining stack
-    while let Some(entry) = stack.pop() {
-        if let Some(parent) = stack.last_mut() {
+    // Empty remaining stack - process from top to bottom (reverse order)
+    while let Some((entry, _)) = stack.pop() {
+        if let Some((parent, _)) = stack.last_mut() {
             parent.children.push(entry);
         } else {
             result.push(entry);
         }
     }
-
-    // Reverse children since we built them backwards
-    fn reverse_children(entries: &mut [TocEntry]) {
-        for entry in entries {
-            entry.children.reverse();
-            reverse_children(&mut entry.children);
-        }
-    }
-
-    result.reverse();
-    reverse_children(&mut result);
 
     result
 }
@@ -197,5 +192,36 @@ mod tests {
         assert_eq!(toc.flat[2].level, 3);
         assert_eq!(toc.flat[3].text, "H2b");
         assert_eq!(toc.flat[3].level, 2);
+
+        // Test tree structure - H1 should be the only root
+        assert_eq!(toc.entries.len(), 1);
+        assert_eq!(toc.entries[0].text, "H1");
+
+        // H1 should have two children: H2a and H2b in that order
+        assert_eq!(toc.entries[0].children.len(), 2);
+        assert_eq!(toc.entries[0].children[0].text, "H2a");
+        assert_eq!(toc.entries[0].children[1].text, "H2b");
+
+        // H2a should have one child: H3
+        assert_eq!(toc.entries[0].children[0].children.len(), 1);
+        assert_eq!(toc.entries[0].children[0].children[0].text, "H3");
+
+        // H2b should have no children
+        assert_eq!(toc.entries[0].children[1].children.len(), 0);
+    }
+
+    #[test]
+    fn test_build_toc_preserves_document_order() {
+        // Test with multiple siblings at the same level
+        let content = "# Doc\n\n## Section A\n\n## Section B\n\n## Section C";
+        let toc = build_toc(content);
+
+        assert_eq!(toc.entries.len(), 1);
+        assert_eq!(toc.entries[0].children.len(), 3);
+
+        // Children should be in document order: A, B, C
+        assert_eq!(toc.entries[0].children[0].text, "Section A");
+        assert_eq!(toc.entries[0].children[1].text, "Section B");
+        assert_eq!(toc.entries[0].children[2].text, "Section C");
     }
 }

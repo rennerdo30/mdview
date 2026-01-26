@@ -2,7 +2,7 @@
 
 use egui::{Color32, Pos2, Rect, RichText, Ui, Vec2};
 
-use super::model::{Annotation, AnnotationKind, AnnotationStore};
+use super::model::{AnnotationKind, AnnotationStore};
 
 /// Predefined highlight colors
 pub const HIGHLIGHT_COLORS: &[(&str, &str)] = &[

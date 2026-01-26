@@ -1,102 +1,59 @@
 # mdview Development Guide
 
-This guide helps AI assistants understand and contribute to mdview.
+## Quick Reference
 
-## Project Overview
+**Stack:** Rust + egui/eframe + pulldown-cmark + muda (native menus)
 
-mdview is a fast, cross-platform markdown viewer built with Rust and egui. Key design principles:
+**Build:** `cargo build` | **Test:** `cargo test` | **Run:** `cargo run -- file.md`
 
-1. **Performance First**: Sub-50ms startup, smooth 60fps rendering
-2. **Simplicity**: Minimal dependencies, straightforward architecture
-3. **Extensibility**: TOML themes, Lua plugins (optional)
+**Features:** `--features "mermaid,plugins,syntax-highlighting"`
 
 ## Directory Structure
 
 ```
 src/
-├── main.rs          # Entry point, CLI parsing
-├── lib.rs           # Library exports
-├── app/             # Application state and viewer
-├── config/          # Configuration loading
-├── markdown/        # Parsing and rendering
-├── toc/             # Table of contents
-├── annotations/     # Highlights, notes, bookmarks
-├── export/          # PDF export
-├── theme/           # Theme system
-├── watcher/         # File watching
-└── plugin/          # Lua plugins (feature-gated)
+├── main.rs           # Entry, CLI, native menu init
+├── app/viewer.rs     # Main app, UI, event handling
+├── app/state.rs      # AppState - all mutable state
+├── markdown/         # Parser + renderer (pulldown-cmark → egui)
+├── native_menu.rs    # macOS/Win/Linux native menu bar (muda)
+├── config/           # TOML config schema + loading
+├── theme/            # Styling, colors, fonts
+├── export/pdf.rs     # PDF export (printpdf)
+├── annotations/      # Highlights, notes, bookmarks
+├── toc/              # Table of contents sidebar
+├── watcher/          # File change detection
+└── plugin/           # Lua plugins (feature-gated)
 ```
 
 ## Key Patterns
 
-### State Management
-All application state lives in `AppState` (src/app/state.rs). The viewer holds mutable reference and updates on each frame.
+- **State:** All in `AppState` (src/app/state.rs)
+- **Rendering:** pulldown-cmark events → egui widgets (no AST)
+- **Async:** Mermaid renders in background threads via channels
+- **Menus:** Native via muda crate, in-window via egui
 
-### Event-Driven Rendering
-Markdown is parsed to pulldown-cmark events, then converted to egui widgets. No intermediate AST.
+## Common Edits
 
-### Feature Gates
-Optional features like syntax highlighting and plugins are behind Cargo features to minimize binary size.
-
-## Common Tasks
-
-### Adding a New Theme
-1. Create `themes/mytheme.toml` with color/font settings
-2. Add to `BUILTIN_THEMES` in `src/theme/builtin.rs`
-3. Implement in `get_builtin_theme()`
-
-### Adding a Keyboard Shortcut
-1. Add to `KeybindingsConfig` in `src/config/schema.rs`
-2. Handle in `handle_keyboard_shortcuts()` in `src/app/viewer.rs`
-
-### Adding a New Annotation Type
-1. Add variant to `AnnotationKind` in `src/annotations/model.rs`
-2. Add creation method to `Annotation`
-3. Handle rendering in `src/annotations/ui.rs`
-
-### Modifying the Markdown Renderer
-The renderer (src/markdown/renderer.rs) processes pulldown-cmark events. Key methods:
-- `handle_start_tag()`: Open tags
-- `handle_end_tag()`: Close tags and render
-- `render_*()`: Specific element rendering
+| Task | Files |
+|------|-------|
+| Add keyboard shortcut | `config/schema.rs`, `app/viewer.rs:handle_keyboard_shortcuts` |
+| Add menu item | `native_menu.rs`, `app/viewer.rs:handle_native_menu_events` |
+| Modify markdown render | `markdown/renderer.rs:handle_end_tag`, `render_*` methods |
+| Add theme | `theme/builtin.rs` |
+| Add annotation type | `annotations/model.rs`, `annotations/ui.rs` |
 
 ## Testing
 
 ```bash
-# Run all tests
-cargo test
-
-# Run specific module tests
-cargo test markdown::
-
-# Run with output
-cargo test -- --nocapture
+cargo test                    # All tests
+cargo test markdown::         # Module tests
+RUST_LOG=debug cargo run     # Debug logging
 ```
 
-## Debugging Tips
+## Checklist Before Commit
 
-1. Enable logging: `RUST_LOG=debug cargo run`
-2. Check render cache stats via `state.render_cache.stats()`
-3. For egui issues, use `ui.ctx().debug_on_hover()`
-
-## Performance Checklist
-
-- [ ] Use `egui::ScrollArea` with viewport culling
-- [ ] Cache expensive computations
-- [ ] Avoid allocations in hot paths
-- [ ] Profile with `cargo flamegraph`
-
-## Code Style
-
-- Use `rustfmt` with default settings
-- Prefer explicit types for public APIs
-- Document public items with doc comments
-- Keep functions under 50 lines when possible
-
-## Pull Request Guidelines
-
-1. Ensure `cargo test` passes
-2. Run `cargo clippy` and address warnings
-3. Add tests for new functionality
-4. Update documentation as needed
-5. Keep commits focused and well-described
+- [ ] `cargo test` passes
+- [ ] `cargo clippy` clean
+- [ ] `cargo check` no warnings
+- [ ] Update TODO.md if needed

@@ -10,6 +10,10 @@ pub mod annotations;
 pub mod export;
 pub mod theme;
 pub mod watcher;
+pub mod recent;
+pub mod file_association;
+pub mod update;
+pub mod native_menu;
 #[cfg(feature = "plugins")]
 pub mod plugin;
 

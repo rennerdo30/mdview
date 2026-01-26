@@ -1,7 +1,5 @@
 //! Built-in themes
 
-use crate::config::defaults::{dark_theme, light_theme};
-
 /// List of built-in theme names
 pub const BUILTIN_THEMES: &[&str] = &["dark", "light", "sepia", "high-contrast"];
 
@@ -24,25 +22,25 @@ pub fn get_builtin_theme(name: &str) -> Option<ThemeDefinition> {
     match name.to_lowercase().as_str() {
         "dark" => Some(ThemeDefinition {
             name: "dark",
-            background: dark_theme::BACKGROUND,
-            text: dark_theme::TEXT,
-            heading: dark_theme::HEADING,
-            link: dark_theme::LINK,
-            code_background: dark_theme::CODE_BACKGROUND,
-            code_text: dark_theme::CODE_TEXT,
-            sidebar_background: dark_theme::SIDEBAR_BACKGROUND,
-            selection: dark_theme::SELECTION,
+            background: "#1e1e1e",
+            text: "#d4d4d4",
+            heading: "#569cd6",
+            link: "#4ec9b0",
+            code_background: "#2d2d2d",
+            code_text: "#ce9178",
+            sidebar_background: "#252526",
+            selection: "#264f78",
         }),
         "light" => Some(ThemeDefinition {
             name: "light",
-            background: light_theme::BACKGROUND,
-            text: light_theme::TEXT,
-            heading: light_theme::HEADING,
-            link: light_theme::LINK,
-            code_background: light_theme::CODE_BACKGROUND,
-            code_text: light_theme::CODE_TEXT,
-            sidebar_background: light_theme::SIDEBAR_BACKGROUND,
-            selection: light_theme::SELECTION,
+            background: "#ffffff",
+            text: "#333333",
+            heading: "#0066cc",
+            link: "#0077cc",
+            code_background: "#f5f5f5",
+            code_text: "#d73a49",
+            sidebar_background: "#f3f3f3",
+            selection: "#add6ff",
         }),
         "sepia" => Some(ThemeDefinition {
             name: "sepia",

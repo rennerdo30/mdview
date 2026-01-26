@@ -1,19 +1,32 @@
 //! TOC sidebar panel UI
+//!
+//! Refined, minimal table of contents with smooth interactions.
 
-use egui::{Color32, RichText, Ui};
+#![allow(dead_code)]
+
+use egui::{Rounding, Ui, Vec2};
 
 use super::{TocEntry, TocTree};
+use crate::theme::style::palette;
 
 /// TOC panel widget
 pub struct TocPanel {
     /// Collapsed state for each entry (by index)
     collapsed: Vec<bool>,
+
+    /// Currently focused entry index for keyboard navigation
+    focused_index: Option<usize>,
+
+    /// Whether the TOC panel has keyboard focus
+    has_focus: bool,
 }
 
 impl TocPanel {
     pub fn new() -> Self {
         Self {
             collapsed: Vec::new(),
+            focused_index: None,
+            has_focus: false,
         }
     }
 
@@ -29,27 +42,136 @@ impl TocPanel {
             self.collapsed.resize(toc.len(), false);
         }
 
-        ui.heading("Contents");
-        ui.separator();
-
         if toc.is_empty() {
-            ui.label(RichText::new("No headings").italics().color(Color32::GRAY));
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                ui.label(
+                    egui::RichText::new("No headings")
+                        .color(palette::TEXT_DISABLED)
+                        .italics()
+                );
+            });
             return None;
         }
 
         let mut clicked = None;
 
+        // Get flat list of visible entry indices for keyboard navigation
+        let visible_indices = self.get_visible_indices(toc);
+
+        // Handle keyboard navigation
+        if self.has_focus {
+            let nav_result = self.handle_keyboard_nav(ui, &visible_indices, toc.len());
+            if nav_result.is_some() {
+                clicked = nav_result;
+            }
+        }
+
+        // Check for focus on the panel area
+        let response = ui.interact(
+            ui.available_rect_before_wrap(),
+            ui.id().with("toc_focus"),
+            egui::Sense::click(),
+        );
+        if response.clicked() {
+            self.has_focus = true;
+            if self.focused_index.is_none() && !visible_indices.is_empty() {
+                self.focused_index = Some(visible_indices[0]);
+            }
+        }
+
+        // Lose focus when clicking elsewhere
+        if ui.input(|i| i.pointer.any_click()) && !response.hovered() {
+            self.has_focus = false;
+        }
+
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.add_space(4.0);
                 for entry in &toc.entries {
-                    if let Some(idx) = self.render_entry(ui, entry, current_heading, 0) {
+                    if let Some(idx) = self.render_entry(ui, entry, current_heading, self.focused_index, 0) {
                         clicked = Some(idx);
+                        self.focused_index = Some(idx);
                     }
                 }
+                ui.add_space(16.0);
             });
 
         clicked
+    }
+
+    /// Get a flat list of visible (not collapsed) entry indices
+    fn get_visible_indices(&self, toc: &TocTree) -> Vec<usize> {
+        let mut indices = Vec::new();
+        self.collect_visible_indices(&toc.entries, &mut indices);
+        indices
+    }
+
+    fn collect_visible_indices(&self, entries: &[TocEntry], indices: &mut Vec<usize>) {
+        for entry in entries {
+            indices.push(entry.index);
+            let collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
+            if !collapsed && !entry.children.is_empty() {
+                self.collect_visible_indices(&entry.children, indices);
+            }
+        }
+    }
+
+    /// Handle keyboard navigation, returns Some(index) if Enter was pressed on an entry
+    fn handle_keyboard_nav(&mut self, ui: &mut Ui, visible_indices: &[usize], _toc_len: usize) -> Option<usize> {
+        let mut result = None;
+
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowDown) {
+                if let Some(current) = self.focused_index {
+                    if let Some(pos) = visible_indices.iter().position(|&x| x == current) {
+                        if pos + 1 < visible_indices.len() {
+                            self.focused_index = Some(visible_indices[pos + 1]);
+                        }
+                    }
+                } else if !visible_indices.is_empty() {
+                    self.focused_index = Some(visible_indices[0]);
+                }
+            }
+
+            if i.key_pressed(egui::Key::ArrowUp) {
+                if let Some(current) = self.focused_index {
+                    if let Some(pos) = visible_indices.iter().position(|&x| x == current) {
+                        if pos > 0 {
+                            self.focused_index = Some(visible_indices[pos - 1]);
+                        }
+                    }
+                } else if !visible_indices.is_empty() {
+                    self.focused_index = Some(visible_indices[visible_indices.len() - 1]);
+                }
+            }
+
+            if i.key_pressed(egui::Key::ArrowRight) {
+                // Expand current entry
+                if let Some(current) = self.focused_index {
+                    if let Some(c) = self.collapsed.get_mut(current) {
+                        *c = false;
+                    }
+                }
+            }
+
+            if i.key_pressed(egui::Key::ArrowLeft) {
+                // Collapse current entry
+                if let Some(current) = self.focused_index {
+                    if let Some(c) = self.collapsed.get_mut(current) {
+                        *c = true;
+                    }
+                }
+            }
+
+            if i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Space) {
+                result = self.focused_index;
+            }
+        });
+
+        result
     }
 
     /// Render a single TOC entry and its children recursively
@@ -58,65 +180,133 @@ impl TocPanel {
         ui: &mut Ui,
         entry: &TocEntry,
         current_heading: Option<usize>,
+        focused_index: Option<usize>,
         depth: usize,
     ) -> Option<usize> {
         let mut clicked = None;
-        let indent = depth as f32 * 16.0;
+        let base_indent = 16.0;
+        let indent = base_indent + (depth as f32 * 12.0);
         let is_current = current_heading == Some(entry.index);
+        let is_focused = focused_index == Some(entry.index);
         let has_children = !entry.children.is_empty();
 
-        ui.horizontal(|ui| {
-            ui.add_space(indent);
+        // Calculate item height
+        let item_height = 28.0;
 
-            // Collapse toggle for entries with children
-            if has_children {
-                let collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
-                let toggle_text = if collapsed { "▶" } else { "▼" };
+        // Allocate space for the item
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new(ui.available_width(), item_height),
+            egui::Sense::click(),
+        );
 
-                if ui
-                    .small_button(RichText::new(toggle_text).size(10.0))
-                    .clicked()
-                {
-                    if let Some(c) = self.collapsed.get_mut(entry.index) {
-                        *c = !*c;
-                    }
+        let is_hovered = response.hovered();
+
+        // Draw background for current/hovered/focused state
+        if is_current {
+            // Active indicator line on the left
+            let indicator_rect = egui::Rect::from_min_size(
+                rect.min,
+                Vec2::new(3.0, item_height),
+            );
+            ui.painter().rect_filled(
+                indicator_rect,
+                Rounding::ZERO,
+                palette::ACCENT,
+            );
+
+            // Subtle background
+            ui.painter().rect_filled(
+                rect,
+                Rounding::ZERO,
+                palette::BG_HOVER,
+            );
+        } else if is_focused {
+            // Focus indicator - dotted border effect
+            ui.painter().rect_stroke(
+                rect.shrink(1.0),
+                Rounding::same(2.0),
+                egui::Stroke::new(1.0, palette::ACCENT),
+            );
+            ui.painter().rect_filled(
+                rect,
+                Rounding::ZERO,
+                palette::BG_ELEVATED,
+            );
+        } else if is_hovered {
+            ui.painter().rect_filled(
+                rect,
+                Rounding::ZERO,
+                palette::BG_ELEVATED,
+            );
+        }
+
+        // Collapse toggle for entries with children
+        if has_children {
+            let collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
+            let toggle_text = if collapsed { "\u{25B6}" } else { "\u{25BC}" };
+
+            let toggle_pos = rect.min + Vec2::new(indent - 14.0, item_height / 2.0);
+            let toggle_rect = egui::Rect::from_center_size(toggle_pos, Vec2::splat(16.0));
+
+            let toggle_response = ui.interact(toggle_rect, ui.id().with(("toggle", entry.index)), egui::Sense::click());
+
+            ui.painter().text(
+                toggle_pos,
+                egui::Align2::CENTER_CENTER,
+                toggle_text,
+                egui::FontId::proportional(11.0),
+                if toggle_response.hovered() { palette::TEXT_PRIMARY } else { palette::TEXT_MUTED },
+            );
+
+            if toggle_response.clicked() {
+                if let Some(c) = self.collapsed.get_mut(entry.index) {
+                    *c = !*c;
                 }
-            } else {
-                // Spacer for alignment
-                ui.add_space(18.0);
             }
+        }
 
-            // Entry text
-            let text = &entry.text;
-            let mut rich_text = RichText::new(text);
+        // Entry text
+        let text_color = if is_current {
+            palette::ACCENT
+        } else if is_hovered {
+            palette::TEXT_PRIMARY
+        } else {
+            palette::TEXT_SECONDARY
+        };
 
-            // Style based on level and current state
-            rich_text = match entry.level {
-                1 => rich_text.strong().size(14.0),
-                2 => rich_text.strong().size(13.0),
-                3 => rich_text.size(12.0),
-                _ => rich_text.size(11.0),
-            };
+        let font_size = match entry.level {
+            1 => 13.0,
+            2 => 12.5,
+            _ => 12.0,
+        };
 
-            if is_current {
-                rich_text = rich_text.color(Color32::from_rgb(78, 201, 176));
-            }
+        // Truncate text if needed
+        let max_text_width = rect.width() - indent - 16.0;
+        let text = truncate_text(&entry.text, max_text_width, font_size);
 
-            let response = ui.selectable_label(is_current, rich_text);
+        ui.painter().text(
+            rect.min + Vec2::new(indent, item_height / 2.0),
+            egui::Align2::LEFT_CENTER,
+            &text,
+            egui::FontId::proportional(font_size),
+            text_color,
+        );
 
-            if response.clicked() {
-                clicked = Some(entry.index);
-            }
+        // Handle click
+        if response.clicked() {
+            clicked = Some(entry.index);
+        }
 
-            // Tooltip with full text for truncated entries
-            response.on_hover_text(text);
-        });
+        // Show full text on hover if truncated
+        if text != entry.text {
+            response.on_hover_text(&entry.text);
+        }
 
         // Render children if not collapsed
         let collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
         if has_children && !collapsed {
             for child in &entry.children {
-                if let Some(idx) = self.render_entry(ui, child, current_heading, depth + 1) {
+                if let Some(idx) = self.render_entry(ui, child, current_heading, focused_index, depth + 1) {
                     clicked = Some(idx);
                 }
             }
@@ -135,19 +325,96 @@ impl TocPanel {
         self.collapsed.fill(true);
     }
 
-    /// Expand to show a specific heading
-    pub fn expand_to(&mut self, _toc: &TocTree, index: usize) {
-        // For now, just expand all
-        // A proper implementation would trace the path to the entry
-        if index < self.collapsed.len() {
-            self.collapsed[index] = false;
+    /// Expand to show a specific heading by expanding all its ancestors
+    pub fn expand_to(&mut self, toc: &TocTree, index: usize) {
+        if index >= self.collapsed.len() {
+            return;
         }
+
+        // Find the path to this entry (all ancestor indices)
+        let ancestors = self.find_ancestors(toc, index);
+
+        // Expand all ancestors and the target itself
+        for ancestor_idx in ancestors {
+            if ancestor_idx < self.collapsed.len() {
+                self.collapsed[ancestor_idx] = false;
+            }
+        }
+
+        // Also expand the target entry
+        self.collapsed[index] = false;
+    }
+
+    /// Find all ancestor indices for a given entry index
+    fn find_ancestors(&self, toc: &TocTree, target_index: usize) -> Vec<usize> {
+        let mut ancestors = Vec::new();
+        self.find_ancestors_recursive(&toc.entries, target_index, &mut ancestors);
+        ancestors
+    }
+
+    /// Recursively search for ancestors
+    fn find_ancestors_recursive(
+        &self,
+        entries: &[TocEntry],
+        target_index: usize,
+        path: &mut Vec<usize>,
+    ) -> bool {
+        for entry in entries {
+            if entry.index == target_index {
+                // Found the target
+                return true;
+            }
+
+            if !entry.children.is_empty() {
+                // Add this entry to the path and search children
+                path.push(entry.index);
+                if self.find_ancestors_recursive(&entry.children, target_index, path) {
+                    return true;
+                }
+                // Not found in this subtree, remove from path
+                path.pop();
+            }
+        }
+
+        false
+    }
+}
+
+/// Truncate text to fit within a given width
+fn truncate_text(text: &str, max_width: f32, font_size: f32) -> String {
+    // Rough estimate: average character width is about 0.5 * font_size
+    let char_width = font_size * 0.5;
+    let max_chars = (max_width / char_width) as usize;
+
+    if text.len() <= max_chars {
+        text.to_string()
+    } else if max_chars > 3 {
+        format!("{}...", &text[..max_chars - 3])
+    } else {
+        text.to_string()
     }
 }
 
 impl Default for TocPanel {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl TocPanel {
+    /// Set focus to the TOC panel
+    pub fn focus(&mut self) {
+        self.has_focus = true;
+    }
+
+    /// Remove focus from the TOC panel
+    pub fn unfocus(&mut self) {
+        self.has_focus = false;
+    }
+
+    /// Check if the TOC panel has focus
+    pub fn is_focused(&self) -> bool {
+        self.has_focus
     }
 }
 
@@ -159,5 +426,14 @@ mod tests {
     fn test_toc_panel_new() {
         let panel = TocPanel::new();
         assert!(panel.collapsed.is_empty());
+    }
+
+    #[test]
+    fn test_truncate_text() {
+        assert_eq!(truncate_text("short", 100.0, 14.0), "short");
+        // With font_size 14.0, char_width ~7.0, max_chars for 50.0 width is ~7 chars
+        let result = truncate_text("this is a very long text", 50.0, 14.0);
+        assert!(result.ends_with("..."));
+        assert!(result.len() < "this is a very long text".len());
     }
 }

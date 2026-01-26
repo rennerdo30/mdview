@@ -1,5 +1,7 @@
 //! Configuration loader
 
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 use super::schema::Config;

@@ -4,7 +4,7 @@
 
 use clap::Parser;
 use eframe::egui;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod app;
 mod config;
@@ -14,6 +14,10 @@ mod annotations;
 mod export;
 mod theme;
 mod watcher;
+mod recent;
+mod file_association;
+mod update;
+mod native_menu;
 #[cfg(feature = "plugins")]
 mod plugin;
 
@@ -25,9 +29,9 @@ pub use config::Config;
 #[command(name = "mdview")]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Markdown file to open
-    #[arg(value_name = "FILE")]
-    file: Option<PathBuf>,
+    /// Markdown file or folder to open
+    #[arg(value_name = "PATH")]
+    path: Option<PathBuf>,
 
     /// Theme to use (dark, light, or custom theme name)
     #[arg(short, long, default_value = "dark")]
@@ -58,6 +62,13 @@ struct Args {
     config: Option<PathBuf>,
 }
 
+/// Input type determined from CLI path
+enum InputType {
+    File(PathBuf),
+    Folder(PathBuf),
+    None,
+}
+
 fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("warn")
@@ -65,9 +76,16 @@ fn main() -> eframe::Result<()> {
 
     let args = Args::parse();
 
-    // Load configuration
+    // Load configuration with improved error handling
     let mut config = if let Some(config_path) = &args.config {
-        config::loader::load_from_path(config_path).unwrap_or_default()
+        match config::loader::load_from_path(config_path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                log::warn!("Failed to load config from {:?}: {}. Using defaults.", config_path, e);
+                eprintln!("Warning: Could not load config file {:?}: {}", config_path, e);
+                Config::default()
+            }
+        }
     } else {
         config::loader::load_default().unwrap_or_default()
     };
@@ -81,9 +99,38 @@ fn main() -> eframe::Result<()> {
     }
     config.general.theme = args.theme.clone();
 
-    // Handle PDF export mode
-    if let (Some(file), Some(pdf_path)) = (&args.file, &args.export_pdf) {
+    // Determine input type (file vs folder)
+    let input_type = match &args.path {
+        Some(path) if path.is_dir() => InputType::Folder(path.clone()),
+        Some(path) if path.is_file() => InputType::File(path.clone()),
+        Some(path) => {
+            eprintln!("Error: Path does not exist: {}", path.display());
+            std::process::exit(1);
+        }
+        None => InputType::None,
+    };
+
+    // Handle PDF export mode (only for files)
+    if let (InputType::File(ref file), Some(pdf_path)) = (&input_type, &args.export_pdf) {
         return export_pdf_and_exit(file, pdf_path, &config);
+    }
+
+    // Extract file path if it's a file input
+    let file_path = match &input_type {
+        InputType::File(path) => Some(path.clone()),
+        _ => None,
+    };
+
+    // Extract folder path if it's a folder input
+    let folder_path = match input_type {
+        InputType::Folder(path) => Some(path),
+        _ => None,
+    };
+
+    // Initialize native menu bar (must be done before eframe::run_native on macOS)
+    let native_menu = native_menu::NativeMenuBar::new();
+    if native_menu.is_some() {
+        log::info!("Native menu bar initialized");
     }
 
     let native_options = eframe::NativeOptions {
@@ -102,23 +149,46 @@ fn main() -> eframe::Result<()> {
             let theme_style = theme::style::create_style(&config.general.theme, &config);
             cc.egui_ctx.set_style(theme_style);
 
-            Ok(Box::new(MdViewApp::new(cc, args.file.clone(), config)))
+            let mut app = MdViewApp::new(cc, file_path.clone(), config);
+
+            // Store native menu in app for event handling
+            app.set_native_menu(native_menu);
+
+            // If a folder was specified, open it
+            if let Some(folder) = folder_path.clone() {
+                if let Err(e) = app.state.open_folder(folder) {
+                    log::error!("Failed to open folder: {}", e);
+                } else {
+                    app.file_browser_visible = true;
+                }
+            }
+
+            Ok(Box::new(app))
         }),
     )
 }
 
 fn export_pdf_and_exit(
-    markdown_file: &PathBuf,
-    pdf_path: &PathBuf,
+    markdown_file: &Path,
+    pdf_path: &Path,
     config: &Config,
 ) -> eframe::Result<()> {
-    let content = std::fs::read_to_string(markdown_file)
-        .expect("Failed to read markdown file");
+    // Read markdown file with proper error handling
+    let content = match std::fs::read_to_string(markdown_file) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: Failed to read markdown file {:?}: {}", markdown_file, e);
+            std::process::exit(1);
+        }
+    };
 
     let events: Vec<_> = markdown::parser::parse(&content).collect();
 
-    export::pdf::export_to_pdf(&events, pdf_path, config)
-        .expect("Failed to export PDF");
+    // Export to PDF with proper error handling
+    if let Err(e) = export::pdf::export_to_pdf(&events, pdf_path, config) {
+        eprintln!("Error: Failed to export PDF to {:?}: {}", pdf_path, e);
+        std::process::exit(1);
+    }
 
     println!("Exported to: {}", pdf_path.display());
     Ok(())

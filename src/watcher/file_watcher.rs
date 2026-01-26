@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use egui::Context;
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
 
 use crate::app::state::FileEvent;
@@ -15,9 +15,6 @@ use crate::config::defaults::WATCHER_DEBOUNCE_MS;
 pub struct FileWatcher {
     /// The debouncer that handles file events
     _debouncer: Debouncer<RecommendedWatcher>,
-
-    /// Path being watched
-    path: PathBuf,
 }
 
 impl FileWatcher {
@@ -29,20 +26,40 @@ impl FileWatcher {
     ) -> Result<Self, WatcherError> {
         let debounce_duration = Duration::from_millis(WATCHER_DEBOUNCE_MS);
 
+        // Clone path for use in closure
+        let watched_path = path.clone();
+
         // Create the debouncer
         let mut debouncer = new_debouncer(
             debounce_duration,
             move |result: Result<Vec<DebouncedEvent>, notify::Error>| {
                 match result {
                     Ok(events) => {
+                        // Process events - debouncer coalesces rapid changes
+                        // so we typically get one event per change batch
+                        let mut has_event = false;
                         for event in events {
-                            // Send file modified event
-                            let _ = sender.send(FileEvent::Modified);
+                            log::debug!("File event for: {:?}", event.path);
+
+                            // Only process events for our watched file
+                            if event.path == watched_path {
+                                has_event = true;
+                            }
+                        }
+
+                        if has_event {
+                            // Check if file was removed vs modified
+                            if watched_path.exists() {
+                                let _ = sender.send(FileEvent::Modified);
+                            } else {
+                                let _ = sender.send(FileEvent::Removed);
+                            }
                             // Request repaint
                             ctx.request_repaint();
                         }
                     }
                     Err(e) => {
+                        log::error!("File watcher error: {}", e);
                         let _ = sender.send(FileEvent::Error(e.to_string()));
                     }
                 }
@@ -58,13 +75,7 @@ impl FileWatcher {
 
         Ok(Self {
             _debouncer: debouncer,
-            path,
         })
-    }
-
-    /// Get the path being watched
-    pub fn path(&self) -> &PathBuf {
-        &self.path
     }
 }
 
@@ -89,8 +100,6 @@ impl std::error::Error for WatcherError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
-    use tempfile::tempdir;
 
     #[test]
     fn test_watcher_error_display() {
