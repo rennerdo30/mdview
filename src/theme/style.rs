@@ -51,11 +51,13 @@ pub mod palette {
         pub const BG_BASE: Color32 = Color32::from_rgb(252, 252, 253);     // #fcfcfd
         pub const BG_ELEVATED: Color32 = Color32::from_rgb(255, 255, 255); // #ffffff
         pub const BG_HOVER: Color32 = Color32::from_rgb(245, 245, 248);    // #f5f5f8
+        pub const BG_ACTIVE: Color32 = Color32::from_rgb(225, 225, 235);   // #e1e1eb
         pub const BG_SIDEBAR: Color32 = Color32::from_rgb(248, 248, 250);  // #f8f8fa
 
         pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(28, 28, 35);   // #1c1c23
         pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(90, 90, 105);// #5a5a69
         pub const TEXT_MUTED: Color32 = Color32::from_rgb(140, 140, 155);  // #8c8c9b
+        pub const TEXT_DISABLED: Color32 = Color32::from_rgb(180, 180, 190); // #b4b4be
 
         pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(235, 235, 240);
         pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(220, 220, 228);

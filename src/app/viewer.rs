@@ -16,6 +16,36 @@ struct ParsedKeybinding {
     modifiers: Modifiers,
 }
 
+/// Cached keybindings parsed at startup
+#[derive(Debug, Clone, Default)]
+struct CachedKeybindings {
+    toggle_toc: Option<ParsedKeybinding>,
+    export_pdf: Option<ParsedKeybinding>,
+    reload: Option<ParsedKeybinding>,
+    open_file: Option<ParsedKeybinding>,
+    open_folder: Option<ParsedKeybinding>,
+    toggle_file_browser: Option<ParsedKeybinding>,
+    quit: Option<ParsedKeybinding>,
+    add_annotation: Option<ParsedKeybinding>,
+    add_bookmark: Option<ParsedKeybinding>,
+}
+
+impl CachedKeybindings {
+    fn from_config(config: &crate::config::schema::KeybindingsConfig) -> Self {
+        Self {
+            toggle_toc: parse_keybinding(&config.toggle_toc),
+            export_pdf: parse_keybinding(&config.export_pdf),
+            reload: parse_keybinding(&config.reload),
+            open_file: parse_keybinding(&config.open_file),
+            open_folder: parse_keybinding(&config.open_folder),
+            toggle_file_browser: parse_keybinding(&config.toggle_file_browser),
+            quit: parse_keybinding(&config.quit),
+            add_annotation: parse_keybinding(&config.add_annotation),
+            add_bookmark: parse_keybinding(&config.add_bookmark),
+        }
+    }
+}
+
 /// Parse a keybinding string like "Ctrl+T" or "F5" into Key and Modifiers
 fn parse_keybinding(binding: &str) -> Option<ParsedKeybinding> {
     let parts: Vec<&str> = binding.split('+').map(|s| s.trim()).collect();
@@ -68,17 +98,35 @@ fn parse_keybinding(binding: &str) -> Option<ParsedKeybinding> {
     Some(ParsedKeybinding { key, modifiers })
 }
 
-/// Check if a keybinding is pressed
+/// Check if a keybinding is pressed (used for dynamic keybindings)
+#[allow(dead_code)]
 fn is_keybinding_pressed(ctx: &egui::Context, binding: &str) -> bool {
     if let Some(parsed) = parse_keybinding(binding) {
-        ctx.input(|i| {
-            i.key_pressed(parsed.key) &&
-            i.modifiers.command == parsed.modifiers.command &&
-            i.modifiers.alt == parsed.modifiers.alt &&
-            i.modifiers.shift == parsed.modifiers.shift
-        })
+        is_parsed_keybinding_pressed(ctx, &parsed)
     } else {
         false
+    }
+}
+
+/// Check if a pre-parsed keybinding is pressed (more efficient for cached keybindings)
+fn is_parsed_keybinding_pressed(ctx: &egui::Context, parsed: &ParsedKeybinding) -> bool {
+    ctx.input(|i| {
+        i.key_pressed(parsed.key) &&
+        i.modifiers.command == parsed.modifiers.command &&
+        i.modifiers.alt == parsed.modifiers.alt &&
+        i.modifiers.shift == parsed.modifiers.shift
+    })
+}
+
+/// Format a file load error with user-friendly messages
+fn format_load_error(e: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+
+    match e.kind() {
+        ErrorKind::NotFound => "File not found. It may have been moved or deleted.".to_string(),
+        ErrorKind::PermissionDenied => "Permission denied. Check file permissions.".to_string(),
+        ErrorKind::InvalidData => "File contains invalid data. It may be corrupted.".to_string(),
+        _ => format!("Failed to open file: {}", e),
     }
 }
 
@@ -154,6 +202,10 @@ pub struct MdViewApp {
     native_menu: Option<crate::native_menu::NativeMenuBar>,
     /// Cached result of is_default_handler check (to avoid spawning processes every frame)
     cached_is_default_handler: Option<bool>,
+    /// Cached keybindings parsed at startup (avoid parsing every frame)
+    cached_keybindings: CachedKeybindings,
+    /// Whether a file is being dragged over the window (for visual feedback)
+    is_dragging_file: bool,
 }
 
 impl MdViewApp {
@@ -172,6 +224,9 @@ impl MdViewApp {
         // Get default highlight color before moving config
         let default_highlight_color = config.annotations.default_highlight_color.clone();
 
+        // Parse keybindings once at startup
+        let cached_keybindings = CachedKeybindings::from_config(&config.keybindings);
+
         let mut state = AppState::new(config);
         let mut renderer = MarkdownRenderer::new();
 
@@ -183,7 +238,7 @@ impl MdViewApp {
 
             if let Err(e) = state.load_file(path.clone()) {
                 log::error!("Failed to load file: {}", e);
-                state.set_status(format!("Error loading file: {}", e));
+                state.set_status(format_load_error(&e));
             }
         }
 
@@ -236,6 +291,8 @@ impl MdViewApp {
             show_about_dialog: false,
             native_menu: None,
             cached_is_default_handler: None,
+            cached_keybindings,
+            is_dragging_file: false,
         }
     }
 
@@ -559,8 +616,7 @@ impl MdViewApp {
                 MenuAction::Close => {
                     // Clear current file
                     self.state.current_file = None;
-                    self.state.content.clear();
-                    self.state.toc = Default::default();
+                    self.state.clear_content();
                 }
                 MenuAction::ExportPdf => {
                     if self.state.current_file.is_some() {
@@ -587,7 +643,7 @@ impl MdViewApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 MenuAction::ToggleToc => {
-                    self.state.toc_visible = !self.state.toc_visible;
+                    self.state.toggle_toc();
                 }
                 MenuAction::ToggleFileBrowser => {
                     self.file_browser_visible = !self.file_browser_visible;
@@ -595,13 +651,16 @@ impl MdViewApp {
                 MenuAction::ZoomIn => {
                     self.state.config.theme.fonts.size =
                         (self.state.config.theme.fonts.size + 1.0).min(32.0);
+                    self.save_config_debounced();
                 }
                 MenuAction::ZoomOut => {
                     self.state.config.theme.fonts.size =
                         (self.state.config.theme.fonts.size - 1.0).max(8.0);
+                    self.save_config_debounced();
                 }
                 MenuAction::ZoomReset => {
                     self.state.config.theme.fonts.size = 14.0;
+                    self.save_config_debounced();
                 }
                 MenuAction::About => {
                     self.show_about_dialog = true;
@@ -615,29 +674,38 @@ impl MdViewApp {
     }
 
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
-        let keybindings = &self.state.config.keybindings;
+        // Use cached keybindings for efficiency (avoids parsing strings 60 times/second)
+        let kb = &self.cached_keybindings;
 
-        let toggle_toc = is_keybinding_pressed(ctx, &keybindings.toggle_toc);
-        let export_pdf = is_keybinding_pressed(ctx, &keybindings.export_pdf);
-        let reload = is_keybinding_pressed(ctx, &keybindings.reload);
-        let open_file = is_keybinding_pressed(ctx, &keybindings.open_file);
-        let open_folder = is_keybinding_pressed(ctx, &keybindings.open_folder);
-        let toggle_file_browser = is_keybinding_pressed(ctx, &keybindings.toggle_file_browser);
-        let quit = is_keybinding_pressed(ctx, &keybindings.quit);
-        let add_annotation = is_keybinding_pressed(ctx, &keybindings.add_annotation);
-        let add_bookmark = is_keybinding_pressed(ctx, &keybindings.add_bookmark);
+        let toggle_toc = kb.toggle_toc.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let export_pdf = kb.export_pdf.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let reload = kb.reload.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let open_file = kb.open_file.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let open_folder = kb.open_folder.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let toggle_file_browser = kb.toggle_file_browser.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let quit = kb.quit.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let add_annotation = kb.add_annotation.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let add_bookmark = kb.add_bookmark.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
         let escape = ctx.input(|i| i.key_pressed(Key::Escape));
 
         if toggle_toc {
-            self.state.toc_visible = !self.state.toc_visible;
+            self.state.toggle_toc();
+            let visible = self.state.toc_visible();
+            self.state.set_status(if visible { "Contents shown" } else { "Contents hidden" });
         }
 
         if export_pdf {
-            self.export_pdf();
+            if self.state.file_deleted {
+                self.state.set_status("Cannot export: file was deleted");
+            } else {
+                self.export_pdf();
+            }
         }
 
         if reload {
-            if let Err(e) = self.state.reload_file() {
+            if self.state.file_deleted {
+                self.state.set_status("Cannot reload: file was deleted");
+            } else if let Err(e) = self.state.reload_file() {
                 self.state.set_status(format!("Reload failed: {}", e));
             } else {
                 self.state.set_status("Reloaded");
@@ -655,6 +723,7 @@ impl MdViewApp {
         if toggle_file_browser {
             if self.state.folder_state.is_open() {
                 self.file_browser_visible = !self.file_browser_visible;
+                self.state.set_status(if self.file_browser_visible { "File browser shown" } else { "File browser hidden" });
             } else {
                 self.open_folder_dialog();
             }
@@ -664,7 +733,7 @@ impl MdViewApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
-        if add_annotation && self.state.current_file.is_some() {
+        if add_annotation && self.state.current_file.is_some() && !self.state.file_deleted {
             // Show annotation popup at center of screen
             let screen_rect = ctx.screen_rect();
             let center = screen_rect.center();
@@ -673,7 +742,7 @@ impl MdViewApp {
             self.annotation_popup.show(center, (char_offset, char_offset.saturating_add(100)));
         }
 
-        if add_bookmark && self.state.current_file.is_some() {
+        if add_bookmark && self.state.current_file.is_some() && !self.state.file_deleted {
             // Add bookmark at current position
             let char_offset = self.estimate_char_offset_from_scroll();
             self.handle_annotation_action(AnnotationAction::CreateBookmark(char_offset));
@@ -697,14 +766,21 @@ impl MdViewApp {
         for event in events {
             match event {
                 FileEvent::Modified => {
+                    if self.state.file_deleted {
+                        // File was recreated after deletion
+                        self.state.file_deleted = false;
+                    }
                     if let Err(e) = self.state.reload_file() {
+                        // Increase status timeout for errors (8 seconds)
                         self.state.set_status(format!("Hot reload failed: {}", e));
                     } else {
                         self.state.set_status("File reloaded");
                     }
                 }
                 FileEvent::Removed => {
-                    self.state.set_status("File was deleted");
+                    // Mark file as deleted and show persistent warning
+                    self.state.file_deleted = true;
+                    self.state.set_status("Warning: File was deleted externally");
                 }
                 FileEvent::Error(e) => {
                     self.state.set_status(format!("Watcher error: {}", e));
@@ -846,7 +922,16 @@ impl MdViewApp {
         self.renderer.clear_image_cache();
 
         if let Err(e) = self.state.load_file(path) {
-            self.state.set_status(format!("Failed to open: {}", e));
+            self.state.set_status(format_load_error(&e));
+        }
+    }
+
+    /// Save config to disk (for persisting changes like zoom level)
+    fn save_config_debounced(&self) {
+        if let Some(config_path) = crate::config::loader::get_default_config_path() {
+            if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
+                log::warn!("Failed to save config: {}", e);
+            }
         }
     }
 
@@ -872,7 +957,7 @@ impl MdViewApp {
         let mut should_edit_config = false;
         let mut new_theme: Option<String> = None;
 
-        let current_theme = self.state.current_theme.clone();
+        let current_theme = self.state.current_theme().to_string();
         let folder_is_open = self.state.folder_state.is_open();
 
         let is_dark = ctx.style().visuals.dark_mode;
@@ -948,7 +1033,7 @@ impl MdViewApp {
 
                     ui.menu_button("View", |ui| {
                         let toc_shortcut = shortcuts::format("T");
-                        let toc_label = if self.state.toc_visible {
+                        let toc_label = if self.state.toc_visible() {
                             format!("Hide Contents     {}", toc_shortcut)
                         } else {
                             format!("Show Contents     {}", toc_shortcut)
@@ -1030,7 +1115,7 @@ impl MdViewApp {
             self.show_about_dialog = true;
         }
         if should_toggle_toc {
-            self.state.toc_visible = !self.state.toc_visible;
+            self.state.toggle_toc();
         }
         if should_toggle_file_browser {
             self.file_browser_visible = !self.file_browser_visible;
@@ -1124,7 +1209,7 @@ impl MdViewApp {
     }
 
     fn render_toc_sidebar(&mut self, ctx: &egui::Context) {
-        if !self.state.toc_visible {
+        if !self.state.toc_visible() {
             return;
         }
 
@@ -1158,7 +1243,7 @@ impl MdViewApp {
                 // TOC entries
                 if let Some(scroll_to) =
                     self.toc_panel
-                        .render(ui, &self.state.toc, self.state.current_heading_idx)
+                        .render(ui, &self.state.toc, self.state.current_heading_idx, is_dark)
                 {
                     // Set the target heading to scroll to
                     self.state.scroll_to_heading = Some(scroll_to);
@@ -1231,22 +1316,32 @@ impl MdViewApp {
                 .fill(main_bg)
                 .inner_margin(egui::Margin::same(0.0)))
             .show(ctx, |ui| {
+                // Show drag-drop overlay if dragging
+                if self.is_dragging_file {
+                    render_drag_drop_overlay(ui, is_dark);
+                }
+
+                // Show deleted file warning banner
+                if self.state.file_deleted {
+                    render_deleted_file_banner(ui, is_dark);
+                }
+
                 if self.state.content.is_empty() {
                     // Refined welcome screen
-                    render_welcome_screen(ui, &recent_files, &mut file_to_open);
+                    render_welcome_screen(ui, &recent_files, &mut file_to_open, is_dark);
                     return;
                 }
 
-                // Main content area with comfortable margins
-                let content = self.state.content.clone();
-                let annotations = self.state.annotations.clone();
-                let config = self.state.config.clone();
+                // Get cached events (avoids parsing every frame)
+                let events = self.state.get_cached_events();
+
+                // Get references instead of cloning
+                let annotations = &self.state.annotations;
+                let config = &self.state.config;
 
                 // Call pre-render hook
                 #[cfg(feature = "plugins")]
                 self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnPreRender);
-
-                let events: Vec<_> = crate::markdown::parser::parse_with_config(&content, &config).collect();
 
                 let mut heading_positions = Vec::new();
                 let scroll_target = self.state.scroll_to_heading.take();
@@ -1261,10 +1356,10 @@ impl MdViewApp {
                                 ui.set_max_width(720.0); // Comfortable reading width
                                 self.renderer.render_with_scroll_target(
                                     ui,
-                                    &events,
-                                    &annotations,
+                                    events.as_slice(),
+                                    annotations,
                                     &mut heading_positions,
-                                    &config,
+                                    config,
                                     scroll_target,
                                 );
                             });
@@ -1314,13 +1409,86 @@ impl MdViewApp {
     }
 }
 
+/// Render the drag-and-drop overlay
+fn render_drag_drop_overlay(ui: &mut egui::Ui, is_dark: bool) {
+    let overlay_color = if is_dark {
+        egui::Color32::from_rgba_unmultiplied(78, 201, 176, 40)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(0, 120, 150, 40)
+    };
+    let border_color = if is_dark {
+        egui::Color32::from_rgb(78, 201, 176)
+    } else {
+        egui::Color32::from_rgb(0, 120, 150)
+    };
+    let text_color = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
+
+    let rect = ui.available_rect_before_wrap();
+
+    // Semi-transparent overlay
+    ui.painter().rect_filled(rect, 0.0, overlay_color);
+
+    // Dashed border effect (using multiple lines)
+    let stroke = Stroke::new(3.0, border_color);
+    ui.painter().rect_stroke(rect.shrink(20.0), Rounding::same(12.0), stroke);
+
+    // Center text
+    let center = rect.center();
+    ui.painter().text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        "Drop file or folder here",
+        egui::FontId::proportional(24.0),
+        text_color,
+    );
+}
+
+/// Render the deleted file warning banner
+fn render_deleted_file_banner(ui: &mut egui::Ui, is_dark: bool) {
+    let bg_color = if is_dark {
+        egui::Color32::from_rgb(80, 40, 40)
+    } else {
+        egui::Color32::from_rgb(255, 240, 240)
+    };
+    let text_color = if is_dark {
+        egui::Color32::from_rgb(255, 180, 180)
+    } else {
+        egui::Color32::from_rgb(180, 60, 60)
+    };
+
+    egui::Frame::none()
+        .fill(bg_color)
+        .inner_margin(egui::Margin::symmetric(16.0, 8.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("⚠")
+                        .size(16.0)
+                        .color(text_color)
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("This file was deleted externally. Export and reload are disabled.")
+                        .color(text_color)
+                );
+            });
+        });
+}
+
 /// Render the refined welcome screen
 fn render_welcome_screen(
     ui: &mut egui::Ui,
     recent_files: &[(PathBuf, String, String)],
     file_to_open: &mut Option<PathBuf>,
+    is_dark: bool,
 ) {
     let available_size = ui.available_size();
+
+    // Theme-aware colors
+    let text_primary = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
+    let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+    let bg_elevated = if is_dark { palette::BG_ELEVATED } else { palette::light::BG_ELEVATED };
+    let border_subtle = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
 
     ui.vertical_centered(|ui| {
         ui.add_space(available_size.y * 0.15);
@@ -1341,7 +1509,7 @@ fn render_welcome_screen(
                 ui.label(
                     egui::RichText::new("mdview")
                         .size(42.0)
-                        .color(palette::TEXT_PRIMARY)
+                        .color(text_primary)
                         .strong()
                 );
             });
@@ -1352,7 +1520,7 @@ fn render_welcome_screen(
         ui.label(
             egui::RichText::new("A modern markdown viewer")
                 .size(16.0)
-                .color(palette::TEXT_MUTED)
+                .color(text_muted)
         );
 
         ui.add_space(40.0);
@@ -1361,9 +1529,9 @@ fn render_welcome_screen(
         ui.horizontal(|ui| {
             ui.add_space((available_size.x - 300.0) / 2.0);
             ui.vertical(|ui| {
-                render_action_hint(ui, "⌘O", "Open file");
+                render_action_hint(ui, "⌘O", "Open file", is_dark);
                 ui.add_space(8.0);
-                render_action_hint(ui, "drag", "Drop a file here");
+                render_action_hint(ui, "drag", "Drop a file here", is_dark);
             });
         });
 
@@ -1374,9 +1542,9 @@ fn render_welcome_screen(
             let card_width = 400.0;
 
             egui::Frame::none()
-                .fill(palette::BG_ELEVATED)
+                .fill(bg_elevated)
                 .rounding(Rounding::same(12.0))
-                .stroke(Stroke::new(1.0, palette::BORDER_SUBTLE))
+                .stroke(Stroke::new(1.0, border_subtle))
                 .inner_margin(egui::Margin::same(20.0))
                 .show(ui, |ui| {
                     ui.set_min_width(card_width);
@@ -1385,14 +1553,14 @@ fn render_welcome_screen(
                     ui.label(
                         egui::RichText::new("Recent Files")
                             .size(13.0)
-                            .color(palette::TEXT_MUTED)
+                            .color(text_muted)
                             .strong()
                     );
 
                     ui.add_space(12.0);
 
                     for (path, name, dir) in recent_files.iter().take(5) {
-                        let response = render_recent_file_item(ui, name, dir);
+                        let response = render_recent_file_item(ui, name, dir, is_dark);
                         if response.clicked() {
                             *file_to_open = Some(path.clone());
                         }
@@ -1409,9 +1577,9 @@ fn render_logo_icon(ui: &mut egui::Ui) {
 
     let painter = ui.painter();
 
-    // Blue gradient background (using solid color as egui doesn't support gradients easily)
-    let bg_color = egui::Color32::from_rgb(59, 130, 246); // #3B82F6
-    painter.rect_filled(rect, Rounding::same(12.0), bg_color);
+    // Purple gradient background (using solid color as egui doesn't support gradients easily)
+    let bg_color = egui::Color32::from_rgb(139, 92, 246); // #8B5CF6
+    painter.rect_filled(rect, Rounding::same(14.0), bg_color);
 
     // Add subtle highlight at top
     let highlight_rect = egui::Rect::from_min_size(
@@ -1420,72 +1588,61 @@ fn render_logo_icon(ui: &mut egui::Ui) {
     );
     painter.rect_filled(
         highlight_rect,
-        Rounding::same(12.0),
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
+        Rounding::same(14.0),
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 15),
     );
 
-    // Draw the M letter
     let center = rect.center();
-    let m_width = size * 0.6;
-    let m_height = size * 0.5;
-    let m_left = center.x - m_width / 2.0;
-    let m_top = center.y - m_height / 2.0;
 
-    // M shape using lines
-    let stroke = egui::Stroke::new(4.0, egui::Color32::WHITE);
+    // Geometric M - two vertical bars
+    let bar_width = 5.0;
+    let bar_height = size * 0.44;
+    let bar_spacing = size * 0.35;
 
-    // Left vertical
-    painter.line_segment(
-        [
-            egui::Pos2::new(m_left, m_top + m_height),
-            egui::Pos2::new(m_left, m_top),
-        ],
-        stroke,
+    // Left bar
+    let left_bar = egui::Rect::from_center_size(
+        egui::Pos2::new(center.x - bar_spacing / 2.0, center.y),
+        Vec2::new(bar_width, bar_height),
     );
+    painter.rect_filled(left_bar, Rounding::same(2.0), egui::Color32::WHITE);
 
-    // Left diagonal
-    painter.line_segment(
-        [
-            egui::Pos2::new(m_left, m_top),
-            egui::Pos2::new(center.x, m_top + m_height * 0.5),
-        ],
-        stroke,
+    // Right bar
+    let right_bar = egui::Rect::from_center_size(
+        egui::Pos2::new(center.x + bar_spacing / 2.0, center.y),
+        Vec2::new(bar_width, bar_height),
     );
+    painter.rect_filled(right_bar, Rounding::same(2.0), egui::Color32::WHITE);
 
-    // Right diagonal
-    painter.line_segment(
-        [
-            egui::Pos2::new(center.x, m_top + m_height * 0.5),
-            egui::Pos2::new(m_left + m_width, m_top),
-        ],
-        stroke,
-    );
-
-    // Right vertical
-    painter.line_segment(
-        [
-            egui::Pos2::new(m_left + m_width, m_top),
-            egui::Pos2::new(m_left + m_width, m_top + m_height),
-        ],
-        stroke,
-    );
-
-    // Small yellow accent dot in corner
-    let dot_pos = egui::Pos2::new(rect.max.x - 8.0, rect.max.y - 8.0);
-    painter.circle_filled(dot_pos, 4.0, egui::Color32::from_rgb(252, 211, 77));
+    // Center diamond
+    let diamond_size = size * 0.18;
+    let diamond_points = [
+        egui::Pos2::new(center.x, center.y - diamond_size),      // top
+        egui::Pos2::new(center.x + diamond_size, center.y),      // right
+        egui::Pos2::new(center.x, center.y + diamond_size),      // bottom
+        egui::Pos2::new(center.x - diamond_size, center.y),      // left
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        diamond_points.to_vec(),
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 230),
+        egui::Stroke::NONE,
+    ));
 }
 
 /// Render an action hint (shortcut + description)
-fn render_action_hint(ui: &mut egui::Ui, shortcut: &str, description: &str) {
+fn render_action_hint(ui: &mut egui::Ui, shortcut: &str, description: &str, is_dark: bool) {
+    let bg_elevated = if is_dark { palette::BG_ELEVATED } else { palette::light::BG_ELEVATED };
+    let text_secondary = if is_dark { palette::TEXT_SECONDARY } else { palette::light::TEXT_SECONDARY };
+    let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+
     ui.horizontal(|ui| {
         egui::Frame::none()
-            .fill(palette::BG_ELEVATED)
+            .fill(bg_elevated)
             .rounding(Rounding::same(4.0))
             .inner_margin(egui::Margin::symmetric(8.0, 4.0))
             .show(ui, |ui| {
                 ui.label(
                     egui::RichText::new(shortcut)
-                        .color(palette::TEXT_SECONDARY)
+                        .color(text_secondary)
                         .small()
                         .strong()
                 );
@@ -1493,13 +1650,20 @@ fn render_action_hint(ui: &mut egui::Ui, shortcut: &str, description: &str) {
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(description)
-                .color(palette::TEXT_MUTED)
+                .color(text_muted)
         );
     });
 }
 
 /// Render a recent file item as a clickable row
-fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str) -> egui::Response {
+fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str, is_dark: bool) -> egui::Response {
+    // Theme-aware colors
+    let bg_hover = if is_dark { palette::BG_HOVER } else { palette::light::BG_HOVER };
+    let text_primary = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
+    let text_secondary = if is_dark { palette::TEXT_SECONDARY } else { palette::light::TEXT_SECONDARY };
+    let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+    let text_disabled = if is_dark { palette::TEXT_DISABLED } else { palette::light::TEXT_DISABLED };
+
     // Truncate directory path
     let truncated_dir = if dir.len() > 50 {
         format!("...{}", &dir[dir.len()-47..])
@@ -1521,7 +1685,7 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str) -> egui::Re
         ui.painter().rect_filled(
             rect,
             Rounding::same(6.0),
-            palette::BG_HOVER,
+            bg_hover,
         );
     }
 
@@ -1535,7 +1699,7 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str) -> egui::Re
         egui::Align2::LEFT_CENTER,
         "\u{1F4C4}",
         egui::FontId::proportional(14.0),
-        if response.hovered() { palette::TEXT_SECONDARY } else { palette::TEXT_MUTED },
+        if response.hovered() { text_secondary } else { text_muted },
     );
 
     // File name
@@ -1544,7 +1708,7 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str) -> egui::Re
         egui::Align2::LEFT_CENTER,
         name,
         egui::FontId::proportional(14.0),
-        if response.hovered() { palette::TEXT_PRIMARY } else { palette::TEXT_SECONDARY },
+        if response.hovered() { text_primary } else { text_secondary },
     );
 
     // Directory path
@@ -1553,7 +1717,7 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str) -> egui::Re
         egui::Align2::LEFT_CENTER,
         &truncated_dir,
         egui::FontId::proportional(11.0),
-        palette::TEXT_DISABLED,
+        text_disabled,
     );
 
     response
@@ -1601,16 +1765,21 @@ impl eframe::App for MdViewApp {
             }
         }
 
-        // Handle drag and drop
-        let dropped_file = ctx.input(|i| {
-            if !i.raw.dropped_files.is_empty() {
+        // Handle drag and drop with visual feedback
+        let (is_dragging, dropped_file) = ctx.input(|i| {
+            let dragging = !i.raw.hovered_files.is_empty();
+            let dropped = if !i.raw.dropped_files.is_empty() {
                 i.raw.dropped_files[0].path.clone()
             } else {
                 None
-            }
+            };
+            (dragging, dropped)
         });
 
+        self.is_dragging_file = is_dragging;
+
         if let Some(path) = dropped_file {
+            self.is_dragging_file = false;
             // Check if it's a directory or file
             if path.is_dir() {
                 if let Err(e) = self.state.open_folder(path) {

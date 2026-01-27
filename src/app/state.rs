@@ -4,6 +4,9 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
+
+use pulldown_cmark::Event;
 
 use crate::annotations::AnnotationStore;
 use crate::config::Config;
@@ -14,6 +17,59 @@ use crate::toc::TocTree;
 use crate::plugin::LuaRuntime;
 
 pub use super::file_browser::FolderState;
+
+/// Cached markdown parsing results
+#[derive(Clone)]
+pub struct CachedMarkdown {
+    /// Hash of the content that was parsed
+    pub content_hash: String,
+    /// Hash of markdown config options (to invalidate on config change)
+    pub config_hash: u64,
+    /// Owned parsed events
+    pub events: Arc<Vec<Event<'static>>>,
+}
+
+impl CachedMarkdown {
+    /// Create a new cached markdown from content and config
+    pub fn new(content: &str, config: &Config) -> Self {
+        let events: Vec<Event<'static>> = crate::markdown::parser::parse_with_config(content, config)
+            .map(|e| e.into_static())
+            .collect();
+
+        Self {
+            content_hash: compute_content_hash(content),
+            config_hash: compute_markdown_config_hash(config),
+            events: Arc::new(events),
+        }
+    }
+
+    /// Check if cache is valid for given content and config
+    pub fn is_valid(&self, content_hash: &str, config: &Config) -> bool {
+        self.content_hash == content_hash && self.config_hash == compute_markdown_config_hash(config)
+    }
+}
+
+/// Compute a hash of markdown-relevant config options
+fn compute_markdown_config_hash(config: &Config) -> u64 {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+
+    let mut hasher = DefaultHasher::new();
+    config.markdown.tables.hash(&mut hasher);
+    config.markdown.strikethrough.hash(&mut hasher);
+    config.markdown.task_lists.hash(&mut hasher);
+    config.markdown.footnotes.hash(&mut hasher);
+    config.markdown.smart_punctuation.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Compute content hash for tracking changes
+fn compute_content_hash(content: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    hex::encode(hasher.finalize())
+}
 
 /// File change event from the watcher
 #[derive(Debug, Clone)]
@@ -28,17 +84,17 @@ pub struct AppState {
     /// Currently opened file path
     pub current_file: Option<PathBuf>,
 
-    /// Raw markdown content
-    pub content: String,
+    /// Raw markdown content (Arc for cheap cloning)
+    pub content: Arc<String>,
 
     /// Content hash for annotation tracking
     pub content_hash: String,
 
+    /// Cached parsed markdown events (invalidated on content/config change)
+    pub cached_markdown: Option<CachedMarkdown>,
+
     /// Parsed table of contents
     pub toc: TocTree,
-
-    /// Whether the TOC sidebar is visible
-    pub toc_visible: bool,
 
     /// TOC sidebar width
     pub toc_width: f32,
@@ -103,16 +159,17 @@ pub struct AppState {
     /// Folder browsing state
     pub folder_state: FolderState,
 
-    /// Current theme name (for theme switching)
-    pub current_theme: String,
+    /// Whether the file was deleted externally (for showing warning UI)
+    pub file_deleted: bool,
+
+    /// Whether a file operation is in progress (for loading indicator)
+    pub is_loading: bool,
 }
 
 impl AppState {
     pub fn new(config: Config) -> Self {
-        let toc_visible = config.general.show_toc;
         let toc_width = config.general.toc_width as f32;
         let recent_files = load_recent_files();
-        let current_theme = config.general.theme.clone();
 
         // Initialize plugin runtime if feature is enabled
         #[cfg(feature = "plugins")]
@@ -153,10 +210,10 @@ impl AppState {
 
         Self {
             current_file: None,
-            content: String::new(),
+            content: Arc::new(String::new()),
             content_hash: String::new(),
+            cached_markdown: None,
             toc: TocTree::new(),
-            toc_visible,
             toc_width,
             scroll_offset: 0.0,
             current_heading_idx: None,
@@ -179,8 +236,50 @@ impl AppState {
             #[cfg(feature = "plugins")]
             failed_plugins,
             folder_state: FolderState::new(),
-            current_theme,
+            file_deleted: false,
+            is_loading: false,
         }
+    }
+
+    /// Whether the TOC sidebar is visible (from config)
+    pub fn toc_visible(&self) -> bool {
+        self.config.general.show_toc
+    }
+
+    /// Set TOC visibility (updates config)
+    pub fn set_toc_visible(&mut self, visible: bool) {
+        self.config.general.show_toc = visible;
+    }
+
+    /// Toggle TOC visibility
+    pub fn toggle_toc(&mut self) {
+        self.config.general.show_toc = !self.config.general.show_toc;
+    }
+
+    /// Get current theme name (from config)
+    pub fn current_theme(&self) -> &str {
+        &self.config.general.theme
+    }
+
+    /// Get or create cached markdown events
+    pub fn get_cached_events(&mut self) -> Arc<Vec<Event<'static>>> {
+        // Check if cache is valid
+        if let Some(ref cached) = self.cached_markdown {
+            if cached.is_valid(&self.content_hash, &self.config) {
+                return Arc::clone(&cached.events);
+            }
+        }
+
+        // Cache miss - parse and cache
+        let cached = CachedMarkdown::new(&self.content, &self.config);
+        let events = Arc::clone(&cached.events);
+        self.cached_markdown = Some(cached);
+        events
+    }
+
+    /// Invalidate the markdown cache (call when content or config changes)
+    pub fn invalidate_markdown_cache(&mut self) {
+        self.cached_markdown = None;
     }
 
     /// Set a status message that will be displayed temporarily
@@ -197,16 +296,10 @@ impl AppState {
         }
     }
 
-    /// Compute content hash for annotation tracking
-    pub fn compute_content_hash(content: &str) -> String {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        hex::encode(hasher.finalize())
-    }
-
     /// Load a file and update state
     pub fn load_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
+        self.is_loading = true;
+
         // Call file close hook for previous file if any
         #[cfg(feature = "plugins")]
         if let Some(ref prev_path) = self.current_file {
@@ -214,7 +307,7 @@ impl AppState {
         }
 
         let content = std::fs::read_to_string(&path)?;
-        let content_hash = Self::compute_content_hash(&content);
+        let content_hash = compute_content_hash(&content);
 
         // Parse TOC
         let toc = crate::toc::builder::build_toc(&content);
@@ -239,12 +332,15 @@ impl AppState {
             crate::annotations::storage::annotations_exist(&path);
 
         self.current_file = Some(path.clone());
-        self.content = content;
+        self.content = Arc::new(content);
         self.content_hash = content_hash;
+        self.cached_markdown = None; // Invalidate cache
         self.toc = toc;
         self.annotations = annotations;
         self.heading_positions.clear();
         self.show_recent_files = false;
+        self.file_deleted = false;
+        self.is_loading = false;
 
         // Show warning if annotations couldn't be loaded
         if had_annotation_error {
@@ -262,6 +358,17 @@ impl AppState {
         self.call_plugin_hook_with_path(crate::plugin::api::PluginHook::OnFileOpen, &path);
 
         Ok(())
+    }
+
+    /// Clear content (used when file is deleted or closed)
+    pub fn clear_content(&mut self) {
+        self.content = Arc::new(String::new());
+        self.content_hash = String::new();
+        self.cached_markdown = None;
+        self.toc = TocTree::new();
+        self.annotations = AnnotationStore::new();
+        self.heading_positions.clear();
+        self.visible_char_range = None;
     }
 
     /// Reload the current file (preserving scroll position)
@@ -313,13 +420,12 @@ impl AppState {
 
     /// Switch the current theme
     pub fn switch_theme(&mut self, theme_name: &str) {
-        let old_theme = self.current_theme.clone();
-        self.current_theme = theme_name.to_string();
+        let old_theme = self.config.general.theme.clone();
         self.config.general.theme = theme_name.to_string();
 
         // Call theme change hook if theme actually changed
         #[cfg(feature = "plugins")]
-        if old_theme != self.current_theme {
+        if old_theme != self.config.general.theme {
             self.call_plugin_hook(crate::plugin::api::PluginHook::OnThemeChange);
         }
 
@@ -419,8 +525,7 @@ impl AppState {
             for (key, value) in changes {
                 match key.as_str() {
                     "theme" => {
-                        self.config.general.theme = value.clone();
-                        self.current_theme = value;
+                        self.config.general.theme = value;
                         changed = true;
                         log::debug!("[plugin] Changed theme");
                     }
@@ -434,7 +539,6 @@ impl AppState {
                     "show_toc" => {
                         if let Ok(b) = value.parse::<bool>() {
                             self.config.general.show_toc = b;
-                            self.toc_visible = b;
                             changed = true;
                             log::debug!("[plugin] Changed show_toc to {}", b);
                         }

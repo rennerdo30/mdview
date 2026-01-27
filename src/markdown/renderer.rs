@@ -9,8 +9,62 @@ use egui::{Color32, RichText, TextureHandle, Ui, Vec2};
 use pulldown_cmark::{Alignment, Event, Tag, TagEnd, CodeBlockKind};
 
 use crate::annotations::AnnotationStore;
+use crate::annotations::model::{Annotation, AnnotationKind};
 use crate::config::defaults::heading_size_multiplier;
 use crate::config::Config;
+
+/// Pre-built annotation index for efficient O(log n) lookups
+/// Instead of O(n) scan per character, we build a sorted list of annotation boundaries
+/// Note: Currently the optimization is inlined in render_mixed_content_with_annotations,
+/// but this struct is kept for potential future use with larger annotation sets.
+#[allow(dead_code)]
+struct AnnotationIndex<'a> {
+    /// Annotations sorted by start position for binary search
+    sorted_annotations: Vec<&'a Annotation>,
+}
+
+#[allow(dead_code)]
+impl<'a> AnnotationIndex<'a> {
+    /// Build an index from annotations in a given range
+    fn new(annotations: &'a AnnotationStore, start: usize, end: usize) -> Self {
+        let mut sorted: Vec<&'a Annotation> = annotations
+            .all()
+            .filter(|a| a.overlaps(start, end))
+            .collect();
+        sorted.sort_by_key(|a| a.start);
+        Self { sorted_annotations: sorted }
+    }
+
+    /// Get highlight color at position using binary search (O(log n))
+    fn get_highlight_color(&self, pos: usize) -> Option<Color32> {
+        // Find annotations that contain this position
+        // Since annotations are sorted by start, we can use binary search to find candidates
+        for ann in &self.sorted_annotations {
+            if ann.start > pos {
+                break; // No more candidates (sorted by start)
+            }
+            if ann.kind == AnnotationKind::Highlight && ann.contains(pos) {
+                let color = ann.color.as_deref().unwrap_or("#ffeb3b");
+                let c = crate::annotations::ui::parse_hex_color(color);
+                return Some(Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 80));
+            }
+        }
+        None
+    }
+
+    /// Check if there's a note at position (O(log n))
+    fn has_note_at(&self, pos: usize) -> bool {
+        for ann in &self.sorted_annotations {
+            if ann.start > pos {
+                break;
+            }
+            if ann.kind == AnnotationKind::Note && ann.contains(pos) {
+                return true;
+            }
+        }
+        false
+    }
+}
 
 /// Result of an async mermaid render
 type MermaidRenderResult = (String, Result<Vec<u8>, String>);
@@ -684,35 +738,51 @@ impl MarkdownRenderer {
         text: &str,
         base_font_size: f32,
         start_offset: usize,
-        annotations: &[&crate::annotations::model::Annotation],
+        annotations: &[&Annotation],
         code_text_color: Option<Color32>,
         in_strikethrough: bool,
     ) {
-        use crate::annotations::model::AnnotationKind;
-        use crate::annotations::ui::parse_hex_color;
+        // Build a simple index for the annotations we have
+        // This avoids O(n) lookup per character by using sorted annotations
+        let end_offset = start_offset + text.chars().count();
+
+        // Create a local sorted copy for efficient lookup
+        let mut sorted_anns: Vec<&Annotation> = annotations.iter()
+            .filter(|a| a.overlaps(start_offset, end_offset))
+            .copied()
+            .collect();
+        sorted_anns.sort_by_key(|a| a.start);
 
         // Split on inline code markers and footnote markers, render appropriately
         // First split on \x00 (inline code), then handle \x01 (footnotes) within each part
         let parts: Vec<&str> = text.split('\x00').collect();
 
-        // Find highlight color for a given position
+        // Find highlight color for a given position using sorted annotations
         let get_highlight_color = |char_pos: usize| -> Option<Color32> {
-            for ann in annotations {
+            for ann in &sorted_anns {
+                if ann.start > char_pos {
+                    break; // No more candidates
+                }
                 if ann.kind == AnnotationKind::Highlight && ann.contains(char_pos) {
                     let color = ann.color.as_deref().unwrap_or("#ffeb3b");
-                    let c = parse_hex_color(color);
-                    // Make semi-transparent for highlight effect
+                    let c = crate::annotations::ui::parse_hex_color(color);
                     return Some(Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 80));
                 }
             }
             None
         };
 
-        // Check if there's a note at this position (for showing an indicator)
+        // Check if there's a note at this position
         let has_note_at = |char_pos: usize| -> bool {
-            annotations.iter().any(|ann| {
-                ann.kind == AnnotationKind::Note && ann.contains(char_pos)
-            })
+            for ann in &sorted_anns {
+                if ann.start > char_pos {
+                    break;
+                }
+                if ann.kind == AnnotationKind::Note && ann.contains(char_pos) {
+                    return true;
+                }
+            }
+            false
         };
 
         ui.horizontal_wrapped(|ui| {

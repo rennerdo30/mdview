@@ -80,8 +80,10 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
     // get_content() - returns the current markdown content
     let state_clone = Arc::clone(&plugin_state);
     let get_content = lua.create_function(move |_, ()| {
-        let state = state_clone.lock().unwrap();
-        Ok(state.content.clone())
+        match state_clone.lock() {
+            Ok(state) => Ok(state.content.clone()),
+            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+        }
     })?;
     mdview.set("get_content", get_content)?;
 
@@ -90,40 +92,56 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
     let state_clone = Arc::clone(&plugin_state);
     let notify = lua.create_function(move |_, (msg, level): (String, Option<String>)| {
         let level = level.unwrap_or_else(|| "info".to_string());
-        let mut state = state_clone.lock().unwrap();
-        state.notifications.push((msg, level));
-        Ok(())
+        match state_clone.lock() {
+            Ok(mut state) => {
+                state.notifications.push((msg, level));
+                Ok(())
+            }
+            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+        }
     })?;
     mdview.set("notify", notify)?;
 
     // add_highlight(start, end, color) - create a highlight annotation
     let state_clone = Arc::clone(&plugin_state);
     let add_highlight = lua.create_function(move |_, (start, end, color): (usize, usize, String)| {
-        let mut state = state_clone.lock().unwrap();
-        state.pending_annotations.push(PendingAnnotationAction::AddHighlight { start, end, color });
-        Ok(())
+        match state_clone.lock() {
+            Ok(mut state) => {
+                state.pending_annotations.push(PendingAnnotationAction::AddHighlight { start, end, color });
+                Ok(())
+            }
+            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+        }
     })?;
     mdview.set("add_highlight", add_highlight)?;
 
     // add_note(start, end, text) - create a note annotation
     let state_clone = Arc::clone(&plugin_state);
     let add_note = lua.create_function(move |_, (start, end, text): (usize, usize, String)| {
-        let mut state = state_clone.lock().unwrap();
-        state.pending_annotations.push(PendingAnnotationAction::AddNote { start, end, text });
-        Ok(())
+        match state_clone.lock() {
+            Ok(mut state) => {
+                state.pending_annotations.push(PendingAnnotationAction::AddNote { start, end, text });
+                Ok(())
+            }
+            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+        }
     })?;
     mdview.set("add_note", add_note)?;
 
     // get_setting(key) - read a config value
     let state_clone = Arc::clone(&plugin_state);
     let get_setting = lua.create_function(move |lua, key: String| {
-        let state = state_clone.lock().unwrap();
-        match key.as_str() {
-            "theme" => Ok(Value::String(lua.create_string(&state.config_snapshot.theme)?)),
-            "hot_reload" => Ok(Value::Boolean(state.config_snapshot.hot_reload)),
-            "show_toc" => Ok(Value::Boolean(state.config_snapshot.show_toc)),
-            "syntax_highlighting" => Ok(Value::Boolean(state.config_snapshot.syntax_highlighting)),
-            _ => Ok(Value::Nil),
+        match state_clone.lock() {
+            Ok(state) => {
+                match key.as_str() {
+                    "theme" => Ok(Value::String(lua.create_string(&state.config_snapshot.theme)?)),
+                    "hot_reload" => Ok(Value::Boolean(state.config_snapshot.hot_reload)),
+                    "show_toc" => Ok(Value::Boolean(state.config_snapshot.show_toc)),
+                    "syntax_highlighting" => Ok(Value::Boolean(state.config_snapshot.syntax_highlighting)),
+                    _ => Ok(Value::Nil),
+                }
+            }
+            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
         }
     })?;
     mdview.set("get_setting", get_setting)?;
@@ -131,7 +149,6 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
     // set_setting(key, value) - modify a config value
     let state_clone = Arc::clone(&plugin_state);
     let set_setting = lua.create_function(move |_, (key, value): (String, Value)| {
-        let mut state = state_clone.lock().unwrap();
         let value_str = match value {
             Value::Boolean(b) => b.to_string(),
             Value::Integer(i) => i.to_string(),
@@ -139,8 +156,13 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
             Value::String(s) => s.to_str()?.to_string(),
             _ => return Err(mlua::Error::RuntimeError("Unsupported value type".into())),
         };
-        state.pending_config_changes.push((key, value_str));
-        Ok(())
+        match state_clone.lock() {
+            Ok(mut state) => {
+                state.pending_config_changes.push((key, value_str));
+                Ok(())
+            }
+            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+        }
     })?;
     mdview.set("set_setting", set_setting)?;
 

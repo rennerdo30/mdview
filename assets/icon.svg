@@ -1,15 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
   <defs>
-    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#3B82F6"/>
-      <stop offset="100%" style="stop-color:#1D4ED8"/>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6"/>
+      <stop offset="100%" style="stop-color:#6D28D9"/>
     </linearGradient>
   </defs>
 
   <!-- Rounded square background -->
-  <rect x="8" y="8" width="112" height="112" rx="20" ry="20" fill="url(#iconGrad)"/>
+  <rect x="8" y="8" width="112" height="112" rx="24" ry="24" fill="url(#bgGrad)"/>
 
-  <!-- Simplified M -->
-  <path d="M 28 92 L 28 36 L 44 36 L 64 60 L 84 36 L 100 36 L 100 92 L 84 92 L 84 60 L 68 80 L 60 80 L 44 60 L 44 92 Z"
-        fill="#FFFFFF"/>
+  <!-- Geometric M shape - two vertical bars with angled connector -->
+  <rect x="28" y="36" width="12" height="56" rx="2" fill="#FFFFFF"/>
+  <rect x="88" y="36" width="12" height="56" rx="2" fill="#FFFFFF"/>
+
+  <!-- Center diamond/arrow pointing down -->
+  <polygon points="64,44 76,62 64,80 52,62" fill="#FFFFFF" opacity="0.9"/>
 </svg>

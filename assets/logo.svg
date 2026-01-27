@@ -1,45 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
   <defs>
-    <!-- Gradient for the document background -->
-    <linearGradient id="docGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1D4ED8;stop-opacity:1" />
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6"/>
+      <stop offset="100%" style="stop-color:#6D28D9"/>
     </linearGradient>
 
-    <!-- Subtle shadow -->
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.15"/>
-    </filter>
-
-    <!-- Glow effect for accent -->
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#6D28D9" flood-opacity="0.3"/>
     </filter>
   </defs>
 
-  <!-- Background rounded rectangle (document) -->
-  <rect x="80" y="40" width="352" height="432" rx="24" ry="24"
-        fill="url(#docGrad)" filter="url(#shadow)"/>
+  <!-- Rounded square background -->
+  <rect x="32" y="32" width="448" height="448" rx="96" ry="96"
+        fill="url(#bgGrad)" filter="url(#shadow)"/>
 
-  <!-- Document fold corner effect -->
-  <path d="M 432 40 L 432 120 L 352 40 Z" fill="#2563EB"/>
-  <path d="M 352 40 L 432 120 L 352 120 Z" fill="#60A5FA"/>
+  <!-- Geometric M shape - two vertical bars -->
+  <rect x="112" y="144" width="48" height="224" rx="8" fill="#FFFFFF"/>
+  <rect x="352" y="144" width="48" height="224" rx="8" fill="#FFFFFF"/>
 
-  <!-- Markdown "M" symbol - bold and modern -->
-  <g transform="translate(128, 160)">
-    <!-- M shape with thick strokes -->
-    <path d="M 0 200 L 0 0 L 64 0 L 128 100 L 192 0 L 256 0 L 256 200 L 200 200 L 200 80 L 140 170 L 116 170 L 56 80 L 56 200 Z"
-          fill="#FFFFFF"/>
-  </g>
-
-  <!-- Decorative line elements (representing text/markdown lines) -->
-  <rect x="128" y="400" width="160" height="8" rx="4" fill="#93C5FD" opacity="0.7"/>
-  <rect x="128" y="420" width="100" height="8" rx="4" fill="#93C5FD" opacity="0.5"/>
-
-  <!-- Small accent dot -->
-  <circle cx="420" cy="420" r="12" fill="#FCD34D" filter="url(#glow)"/>
+  <!-- Center diamond -->
+  <polygon points="256,176 304,256 256,336 208,256" fill="#FFFFFF" opacity="0.9"/>
 </svg>
