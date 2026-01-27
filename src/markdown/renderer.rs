@@ -830,7 +830,7 @@ impl MarkdownRenderer {
         }
 
         let padding = config.theme.spacing.code_padding;
-        let is_dark = is_dark_theme(config);
+        let is_dark = ui.visuals().dark_mode;
 
         egui::Frame::none()
             .fill(theme_colors::code_block_bg(is_dark))

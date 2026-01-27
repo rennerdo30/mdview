@@ -858,9 +858,12 @@ impl MdViewApp {
         let current_theme = self.state.current_theme.clone();
         let folder_is_open = self.state.folder_state.is_open();
 
+        let is_dark = ctx.style().visuals.dark_mode;
+        let menu_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
+
         egui::TopBottomPanel::top("menu_bar")
             .frame(egui::Frame::none()
-                .fill(palette::BG_DARK)
+                .fill(menu_bg)
                 .inner_margin(egui::Margin::symmetric(12.0, 6.0)))
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
@@ -1026,29 +1029,35 @@ impl MdViewApp {
     fn render_status_bar(&mut self, ctx: &egui::Context) {
         self.state.clear_expired_status();
 
+        let is_dark = ctx.style().visuals.dark_mode;
+        let status_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
+        let border_color = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
+        let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+        let accent = if is_dark { palette::ACCENT } else { palette::light::ACCENT };
+
         egui::TopBottomPanel::bottom("status_bar")
             .frame(egui::Frame::none()
-                .fill(palette::BG_DARK)
+                .fill(status_bg)
                 .inner_margin(egui::Margin::symmetric(16.0, 6.0))
-                .stroke(Stroke::new(1.0, palette::BORDER_SUBTLE)))
+                .stroke(Stroke::new(1.0, border_color)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if let Some((msg, _)) = &self.state.status_message {
                         ui.label(
                             egui::RichText::new(msg)
-                                .color(palette::ACCENT)
+                                .color(accent)
                                 .small()
                         );
                     } else if let Some(file) = &self.state.current_file {
                         ui.label(
                             egui::RichText::new(file.display().to_string())
-                                .color(palette::TEXT_MUTED)
+                                .color(text_muted)
                                 .small()
                         );
                     } else {
                         ui.label(
                             egui::RichText::new("No file open")
-                                .color(palette::TEXT_DISABLED)
+                                .color(if is_dark { palette::TEXT_DISABLED } else { palette::light::TEXT_MUTED })
                                 .small()
                         );
                     }
@@ -1079,14 +1088,19 @@ impl MdViewApp {
             return;
         }
 
+        let is_dark = ctx.style().visuals.dark_mode;
+        let panel_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
+        let border_color = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
+        let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+
         egui::SidePanel::left("toc_panel")
             .resizable(true)
             .default_width(self.state.toc_width)
             .width_range(180.0..=400.0)
             .frame(egui::Frame::none()
-                .fill(palette::BG_DARK)
+                .fill(panel_bg)
                 .inner_margin(egui::Margin::same(0.0))
-                .stroke(Stroke::new(1.0, palette::BORDER_SUBTLE)))
+                .stroke(Stroke::new(1.0, border_color)))
             .show(ctx, |ui| {
                 // Header
                 ui.add_space(16.0);
@@ -1094,7 +1108,7 @@ impl MdViewApp {
                     ui.add_space(16.0);
                     ui.label(
                         egui::RichText::new("CONTENTS")
-                            .color(palette::TEXT_MUTED)
+                            .color(text_muted)
                             .small()
                             .strong()
                     );
@@ -1117,6 +1131,11 @@ impl MdViewApp {
             return;
         }
 
+        let is_dark = ctx.style().visuals.dark_mode;
+        let panel_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
+        let border_color = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
+        let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+
         let mut file_to_open: Option<PathBuf> = None;
 
         egui::SidePanel::right("file_browser_panel")
@@ -1124,16 +1143,16 @@ impl MdViewApp {
             .default_width(250.0)
             .width_range(180.0..=400.0)
             .frame(egui::Frame::none()
-                .fill(palette::BG_DARK)
+                .fill(panel_bg)
                 .inner_margin(egui::Margin::same(8.0))
-                .stroke(Stroke::new(1.0, palette::BORDER_SUBTLE)))
+                .stroke(Stroke::new(1.0, border_color)))
             .show(ctx, |ui| {
                 // Header
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("FILES")
-                            .color(palette::TEXT_MUTED)
+                            .color(text_muted)
                             .small()
                             .strong()
                     );
@@ -1154,6 +1173,9 @@ impl MdViewApp {
     }
 
     fn render_main_content(&mut self, ctx: &egui::Context) {
+        let is_dark = ctx.style().visuals.dark_mode;
+        let main_bg = if is_dark { palette::BG_BASE } else { palette::light::BG_BASE };
+
         let recent_files: Vec<_> = self
             .state
             .recent_files
@@ -1166,7 +1188,7 @@ impl MdViewApp {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none()
-                .fill(palette::BG_BASE)
+                .fill(main_bg)
                 .inner_margin(egui::Margin::same(0.0)))
             .show(ctx, |ui| {
                 if self.state.content.is_empty() {
