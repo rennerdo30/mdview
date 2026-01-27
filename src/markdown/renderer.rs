@@ -27,6 +27,126 @@ fn parse_config_hex_color(hex: &str) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
+/// Check if the current theme is a dark theme
+fn is_dark_theme(config: &Config) -> bool {
+    !config.general.theme.to_lowercase().eq("light")
+}
+
+/// Theme-aware colors for markdown rendering
+mod theme_colors {
+    use egui::Color32;
+
+    // Code block backgrounds
+    pub fn code_block_bg(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(30, 35, 45)
+        } else {
+            Color32::from_rgb(245, 247, 250)
+        }
+    }
+
+    pub fn code_block_border(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(60, 70, 90)
+        } else {
+            Color32::from_rgb(210, 215, 225)
+        }
+    }
+
+    // Inline code
+    pub fn inline_code_text(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(206, 145, 120)
+        } else {
+            Color32::from_rgb(180, 80, 80)
+        }
+    }
+
+    // Code block text colors
+    pub fn code_text(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(180, 190, 210)
+        } else {
+            Color32::from_rgb(50, 55, 70)
+        }
+    }
+
+    pub fn code_line_number(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(100, 110, 130)
+        } else {
+            Color32::from_rgb(150, 155, 165)
+        }
+    }
+
+    pub fn code_lang_label(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(255, 154, 162)
+        } else {
+            Color32::from_rgb(180, 60, 80)
+        }
+    }
+
+    // Links
+    pub fn link_color(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(78, 201, 176)
+        } else {
+            Color32::from_rgb(0, 120, 150)
+        }
+    }
+
+    // Blockquote
+    pub fn blockquote_bg(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(45, 50, 65)
+        } else {
+            Color32::from_rgb(240, 245, 250)
+        }
+    }
+
+    pub fn blockquote_border(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(80, 130, 180)
+        } else {
+            Color32::from_rgb(100, 150, 200)
+        }
+    }
+
+    pub fn blockquote_text(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(180, 180, 200)
+        } else {
+            Color32::from_rgb(70, 75, 90)
+        }
+    }
+
+    // Table
+    pub fn table_header_bg(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(40, 45, 55)
+        } else {
+            Color32::from_rgb(235, 240, 245)
+        }
+    }
+
+    pub fn table_border(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(60, 65, 80)
+        } else {
+            Color32::from_rgb(200, 205, 215)
+        }
+    }
+
+    pub fn table_row_alt(is_dark: bool) -> Color32 {
+        if is_dark {
+            Color32::from_rgb(35, 40, 50)
+        } else {
+            Color32::from_rgb(248, 250, 252)
+        }
+    }
+}
+
 /// Markdown renderer that converts events to egui widgets
 pub struct MarkdownRenderer {
     /// Current text buffer for accumulating inline content
@@ -710,9 +830,10 @@ impl MarkdownRenderer {
         }
 
         let padding = config.theme.spacing.code_padding;
+        let is_dark = is_dark_theme(config);
 
         egui::Frame::none()
-            .fill(Color32::from_gray(30))
+            .fill(theme_colors::code_block_bg(is_dark))
             .inner_margin(padding)
             .outer_margin(egui::Margin::symmetric(0.0, 4.0))
             .rounding(4.0)
@@ -722,7 +843,7 @@ impl MarkdownRenderer {
                     ui.label(
                         RichText::new(lang)
                             .small()
-                            .color(Color32::from_gray(120)),
+                            .color(theme_colors::code_line_number(is_dark)),
                     );
                     ui.add_space(4.0);
                 }
@@ -743,7 +864,7 @@ impl MarkdownRenderer {
                     ui.label(
                         RichText::new(&code)
                             .monospace()
-                            .color(Color32::from_rgb(206, 145, 120)),
+                            .color(theme_colors::inline_code_text(is_dark)),
                     );
                 }
             });
@@ -1507,9 +1628,10 @@ impl MarkdownRenderer {
         let url = self.current_link.clone().unwrap_or_default();
 
         if !text.is_empty() {
+            let is_dark = ui.visuals().dark_mode;
             let link_text = RichText::new(&text)
                 .size(base_font_size)
-                .color(Color32::from_rgb(78, 201, 176))
+                .color(theme_colors::link_color(is_dark))
                 .underline();
 
             if ui.link(link_text).clicked() {
