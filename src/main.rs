@@ -138,11 +138,17 @@ fn main() -> eframe::Result<()> {
         _ => None,
     };
 
-    // Initialize native menu bar (must be done before eframe::run_native on macOS)
-    let native_menu = native_menu::NativeMenuBar::new();
-    if native_menu.is_some() {
-        log::info!("Native menu bar initialized");
-    }
+    // Initialize native menu bar (macOS only - Windows/Linux use egui in-window menu)
+    #[cfg(target_os = "macos")]
+    let native_menu = {
+        let menu = native_menu::NativeMenuBar::new();
+        if menu.is_some() {
+            log::info!("Native menu bar initialized (macOS)");
+        }
+        menu
+    };
+    #[cfg(not(target_os = "macos"))]
+    let native_menu: Option<native_menu::NativeMenuBar> = None;
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
