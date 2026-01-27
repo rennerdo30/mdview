@@ -567,6 +567,22 @@ impl MdViewApp {
                         self.state.exporting_pdf = true;
                     }
                 }
+                MenuAction::EditConfig => {
+                    match crate::config::loader::create_default_config() {
+                        Ok(config_path) => {
+                            if let Err(e) = open::that(&config_path) {
+                                log::error!("Failed to open config file: {}", e);
+                                self.state.set_status(format!("Failed to open config: {}", e));
+                            } else {
+                                self.state.set_status(format!("Opened config: {}", config_path.display()));
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to create config file: {}", e);
+                            self.state.set_status(format!("Failed to create config: {}", e));
+                        }
+                    }
+                }
                 MenuAction::Quit => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -853,6 +869,7 @@ impl MdViewApp {
         let mut should_toggle_file_browser = false;
         let mut should_clear_recent = false;
         let mut should_show_about = false;
+        let mut should_edit_config = false;
         let mut new_theme: Option<String> = None;
 
         let current_theme = self.state.current_theme.clone();
@@ -911,6 +928,13 @@ impl MdViewApp {
                         let export_label = format!("Export PDF        {}", shortcuts::format("P"));
                         if ui.button(&export_label).clicked() {
                             should_export_pdf = true;
+                            ui.close_menu();
+                        }
+
+                        ui.separator();
+
+                        if ui.button("Edit Config...").clicked() {
+                            should_edit_config = true;
                             ui.close_menu();
                         }
 
@@ -1023,6 +1047,22 @@ impl MdViewApp {
             let style = create_style(&theme, &self.state.config);
             ctx.set_style(style);
             self.state.set_status(format!("Switched to {} theme", theme));
+        }
+        if should_edit_config {
+            match crate::config::loader::create_default_config() {
+                Ok(config_path) => {
+                    if let Err(e) = open::that(&config_path) {
+                        log::error!("Failed to open config file: {}", e);
+                        self.state.set_status(format!("Failed to open config: {}", e));
+                    } else {
+                        self.state.set_status(format!("Opened config: {}", config_path.display()));
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to create config file: {}", e);
+                    self.state.set_status(format!("Failed to create config: {}", e));
+                }
+            }
         }
     }
 

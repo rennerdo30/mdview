@@ -15,6 +15,7 @@ pub enum MenuAction {
     Reload,
     Close,
     ExportPdf,
+    EditConfig,
     Quit,
     ToggleToc,
     ToggleFileBrowser,
@@ -38,6 +39,7 @@ pub struct NativeMenuBar {
     reload_id: muda::MenuId,
     close_id: muda::MenuId,
     export_pdf_id: muda::MenuId,
+    edit_config_id: muda::MenuId,
     toggle_toc_id: muda::MenuId,
     toggle_browser_id: muda::MenuId,
     zoom_in_id: muda::MenuId,
@@ -78,12 +80,14 @@ impl NativeMenuBar {
         let reload_item = MenuItem::new("Reload", true, Some(cmd_accel(Code::KeyR)));
         let close_item = MenuItem::new("Close", true, Some(cmd_accel(Code::KeyW)));
         let export_pdf_item = MenuItem::new("Export as PDF...", true, Some(cmd_shift_accel(Code::KeyE)));
+        let edit_config_item = MenuItem::new("Edit Config...", true, Some(cmd_accel(Code::Comma)));
 
         let open_id = open_item.id().clone();
         let open_folder_id = open_folder_item.id().clone();
         let reload_id = reload_item.id().clone();
         let close_id = close_item.id().clone();
         let export_pdf_id = export_pdf_item.id().clone();
+        let edit_config_id = edit_config_item.id().clone();
 
         let _ = file_menu.append(&open_item);
         let _ = file_menu.append(&open_folder_item);
@@ -91,6 +95,8 @@ impl NativeMenuBar {
         let _ = file_menu.append(&reload_item);
         let _ = file_menu.append(&PredefinedMenuItem::separator());
         let _ = file_menu.append(&export_pdf_item);
+        let _ = file_menu.append(&PredefinedMenuItem::separator());
+        let _ = file_menu.append(&edit_config_item);
         let _ = file_menu.append(&PredefinedMenuItem::separator());
         let _ = file_menu.append(&close_item);
 
@@ -175,6 +181,7 @@ impl NativeMenuBar {
             reload_id,
             close_id,
             export_pdf_id,
+            edit_config_id,
             toggle_toc_id,
             toggle_browser_id,
             zoom_in_id,
@@ -228,6 +235,8 @@ impl NativeMenuBar {
                 Some(MenuAction::Close)
             } else if id == &self.export_pdf_id {
                 Some(MenuAction::ExportPdf)
+            } else if id == &self.edit_config_id {
+                Some(MenuAction::EditConfig)
             } else if id == &self.toggle_toc_id {
                 Some(MenuAction::ToggleToc)
             } else if id == &self.toggle_browser_id {
