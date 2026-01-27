@@ -189,10 +189,9 @@ impl NativeMenuBar {
     #[cfg(windows)]
     pub fn init_for_hwnd(&mut self, hwnd: isize) {
         if !self.initialized {
-            use windows_sys::Win32::Foundation::HWND;
             // Safety: hwnd comes from a valid window
             unsafe {
-                self.menu.init_for_hwnd(hwnd as HWND);
+                let _ = self.menu.init_for_hwnd(hwnd);
             }
             self.initialized = true;
             log::info!("Native menu initialized for Windows HWND");

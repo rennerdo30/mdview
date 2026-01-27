@@ -283,14 +283,17 @@ fn register_windows() -> AssociationResult {
     // 1. Register our app's capabilities in the registry
     // 2. Direct users to Windows Settings to complete the association
 
+    // Pre-format strings that need the exe_path
+    let open_command = format!("\"{}\" \"%1\"", exe_path);
+
     // Register ProgId with shell open command
-    let reg_commands = [
+    let reg_commands: Vec<Vec<&str>> = vec![
         // Create ProgId for mdview
         vec!["reg", "add", r"HKCU\Software\Classes\mdview.md", "/ve", "/d", "Markdown Document", "/f"],
         vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\DefaultIcon", "/ve", "/d", &exe_path, "/f"],
-        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\shell\open\command", "/ve", "/d", &format!("\"{}\" \"%1\"", exe_path), "/f"],
+        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\shell\open\command", "/ve", "/d", &open_command, "/f"],
         // Register application capabilities
-        vec!["reg", "add", r"HKCU\Software\Classes\Applications\mdview.exe\shell\open\command", "/ve", "/d", &format!("\"{}\" \"%1\"", exe_path), "/f"],
+        vec!["reg", "add", r"HKCU\Software\Classes\Applications\mdview.exe\shell\open\command", "/ve", "/d", &open_command, "/f"],
         // Set OpenWithProgIds to show mdview in "Open with" menu
         vec!["reg", "add", r"HKCU\Software\Classes\.md\OpenWithProgIds", "/v", "mdview.md", "/t", "REG_NONE", "/f"],
         vec!["reg", "add", r"HKCU\Software\Classes\.markdown\OpenWithProgIds", "/v", "mdview.md", "/t", "REG_NONE", "/f"],
