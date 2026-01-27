@@ -1562,8 +1562,10 @@ impl eframe::App for MdViewApp {
             }
         }
 
-        // Render UI
-        self.render_menu_bar(ctx);
+        // Render UI (skip egui menu bar if native menu is active)
+        if self.native_menu.is_none() {
+            self.render_menu_bar(ctx);
+        }
         self.render_status_bar(ctx);
         self.render_toc_sidebar(ctx);
         self.render_file_browser_sidebar(ctx);
