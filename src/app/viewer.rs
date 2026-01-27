@@ -152,6 +152,8 @@ pub struct MdViewApp {
     show_about_dialog: bool,
     /// Native menu bar (macOS/Windows/Linux)
     native_menu: Option<crate::native_menu::NativeMenuBar>,
+    /// Cached result of is_default_handler check (to avoid spawning processes every frame)
+    cached_is_default_handler: Option<bool>,
 }
 
 impl MdViewApp {
@@ -233,6 +235,7 @@ impl MdViewApp {
             show_update_dialog: false,
             show_about_dialog: false,
             native_menu: None,
+            cached_is_default_handler: None,
         }
     }
 
@@ -271,11 +274,14 @@ impl MdViewApp {
 
     /// Render the file association dialog
     fn render_file_association_dialog(&mut self, ctx: &egui::Context) {
-        use crate::file_association::is_default_handler;
+        // Cache the default handler check to avoid spawning processes every frame
+        let is_already_default = self.cached_is_default_handler.get_or_insert_with(|| {
+            crate::file_association::is_default_handler()
+        });
+        let is_already_default = *is_already_default;
 
         let mut should_close = false;
         let mut should_register = false;
-        let is_already_default = is_default_handler();
 
         egui::Window::new("Set as Default Markdown Viewer?")
             .collapsible(false)
