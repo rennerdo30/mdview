@@ -1597,14 +1597,16 @@ impl MdViewApp {
                     }
                 }
 
-                let mut current_idx = None;
-                for (idx, &pos) in self.state.heading_positions.iter().enumerate() {
-                    if pos <= scroll_offset + 50.0 {
-                        current_idx = Some(idx);
-                    } else {
-                        break;
-                    }
-                }
+                // Use binary search to find current heading (O(log n) instead of O(n))
+                // Find the last heading position that is <= scroll_offset + 50.0
+                let target = scroll_offset + 50.0;
+                let current_idx = if self.state.heading_positions.is_empty() {
+                    None
+                } else {
+                    // partition_point returns the index where all elements before satisfy the predicate
+                    let idx = self.state.heading_positions.partition_point(|&pos| pos <= target);
+                    if idx > 0 { Some(idx - 1) } else { None }
+                };
                 self.state.current_heading_idx = current_idx;
 
                 // Call post-render hook
@@ -1980,8 +1982,9 @@ impl eframe::App for MdViewApp {
         self.handle_file_events();
         self.handle_keyboard_shortcuts(ctx);
 
-        // Poll for completed async mermaid renders
+        // Poll for completed async mermaid renders and image loads
         self.renderer.poll_mermaid_renders(ctx);
+        self.renderer.poll_image_loads(ctx);
 
         // Handle native menu events
         self.handle_native_menu_events(ctx);

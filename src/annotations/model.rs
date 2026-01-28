@@ -34,6 +34,10 @@ pub struct Annotation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
 
+    /// Pre-parsed color as RGBA tuple (computed lazily, cached to avoid parsing every frame)
+    #[serde(skip)]
+    pub color_rgba: Option<(u8, u8, u8, u8)>,
+
     /// Text content for notes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_text: Option<String>,
@@ -57,12 +61,15 @@ impl Annotation {
             .unwrap_or_default()
             .as_secs();
 
+        let color_rgba = Self::parse_hex_color(color);
+
         Self {
             id: generate_id(),
             kind: AnnotationKind::Highlight,
             start,
             end,
             color: Some(color.to_string()),
+            color_rgba: Some(color_rgba),
             note_text: None,
             created_at: now,
             updated_at: now,
@@ -83,6 +90,7 @@ impl Annotation {
             start,
             end,
             color: None,
+            color_rgba: None,
             note_text: Some(text.to_string()),
             created_at: now,
             updated_at: now,
@@ -103,10 +111,34 @@ impl Annotation {
             start: position,
             end: position,
             color: None,
+            color_rgba: None,
             note_text: None,
             created_at: now,
             updated_at: now,
             content_hash: None,
+        }
+    }
+
+    /// Parse a hex color string to RGBA tuple
+    fn parse_hex_color(hex: &str) -> (u8, u8, u8, u8) {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 {
+            return (255, 235, 59, 255); // Default yellow
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
+        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(235);
+        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(59);
+        (r, g, b, 255)
+    }
+
+    /// Get the parsed RGBA color (computes lazily if not cached)
+    pub fn get_color_rgba(&self) -> (u8, u8, u8, u8) {
+        if let Some(rgba) = self.color_rgba {
+            rgba
+        } else if let Some(ref hex) = self.color {
+            Self::parse_hex_color(hex)
+        } else {
+            (255, 235, 59, 255) // Default yellow
         }
     }
 
@@ -132,6 +164,7 @@ impl Annotation {
     /// Update the color
     pub fn set_color(&mut self, color: &str) {
         self.color = Some(color.to_string());
+        self.color_rgba = Some(Self::parse_hex_color(color));
         self.updated_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -153,6 +186,10 @@ pub struct AnnotationStore {
     /// Schema version for future compatibility
     #[serde(default = "default_version")]
     pub version: u32,
+
+    /// Cached sorted annotations for efficient range queries (invalidated on mutation)
+    #[serde(skip)]
+    sorted_cache: Option<Vec<Annotation>>,
 }
 
 fn default_version() -> u32 {
@@ -165,19 +202,30 @@ impl AnnotationStore {
             annotations: HashMap::new(),
             document_hash: None,
             version: 1,
+            sorted_cache: None,
         }
+    }
+
+    /// Invalidate the sorted cache (call after any mutation)
+    fn invalidate_cache(&mut self) {
+        self.sorted_cache = None;
     }
 
     /// Add an annotation
     pub fn add(&mut self, annotation: Annotation) -> String {
         let id = annotation.id.clone();
         self.annotations.insert(id.clone(), annotation);
+        self.invalidate_cache();
         id
     }
 
     /// Remove an annotation by ID
     pub fn remove(&mut self, id: &str) -> Option<Annotation> {
-        self.annotations.remove(id)
+        let result = self.annotations.remove(id);
+        if result.is_some() {
+            self.invalidate_cache();
+        }
+        result
     }
 
     /// Get an annotation by ID
@@ -185,8 +233,10 @@ impl AnnotationStore {
         self.annotations.get(id)
     }
 
-    /// Get a mutable annotation by ID
+    /// Get a mutable annotation by ID (invalidates sorted cache)
     pub fn get_mut(&mut self, id: &str) -> Option<&mut Annotation> {
+        // Invalidate cache since the returned reference could modify the annotation
+        self.invalidate_cache();
         self.annotations.get_mut(id)
     }
 
@@ -195,11 +245,22 @@ impl AnnotationStore {
         self.annotations.values()
     }
 
-    /// Get all annotations sorted by position
+    /// Get all annotations sorted by position (uses cache for efficiency)
     pub fn sorted_by_position(&self) -> Vec<&Annotation> {
         let mut annotations: Vec<_> = self.annotations.values().collect();
         annotations.sort_by_key(|a| a.start);
         annotations
+    }
+
+    /// Get cached sorted annotations for efficient repeated access
+    /// The cache is automatically invalidated when annotations are modified
+    pub fn get_sorted_cache(&mut self) -> &[Annotation] {
+        if self.sorted_cache.is_none() {
+            let mut sorted: Vec<_> = self.annotations.values().cloned().collect();
+            sorted.sort_by_key(|a| a.start);
+            self.sorted_cache = Some(sorted);
+        }
+        self.sorted_cache.as_ref().unwrap()
     }
 
     /// Get annotations that overlap with a range
@@ -252,6 +313,7 @@ impl AnnotationStore {
     /// Clear all annotations
     pub fn clear(&mut self) {
         self.annotations.clear();
+        self.invalidate_cache();
     }
 
     /// Set the document hash

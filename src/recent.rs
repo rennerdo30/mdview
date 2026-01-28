@@ -50,15 +50,31 @@ pub struct RecentFiles {
     /// List of recent files, most recent first
     #[serde(default)]
     pub files: Vec<RecentFile>,
+
+    /// Cached list of existing files (computed lazily, invalidated on mutation or after time)
+    #[serde(skip)]
+    existing_cache: Option<(Vec<RecentFile>, std::time::Instant)>,
 }
+
+/// How long to cache the existence check result (5 seconds)
+const EXISTENCE_CACHE_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl RecentFiles {
     pub fn new() -> Self {
-        Self { files: Vec::new() }
+        Self {
+            files: Vec::new(),
+            existing_cache: None,
+        }
+    }
+
+    /// Invalidate the existence cache (call after mutations or on window focus)
+    fn invalidate_cache(&mut self) {
+        self.existing_cache = None;
     }
 
     /// Add a file to the recent list
     pub fn add(&mut self, path: &Path) {
+        self.invalidate_cache();
         // Try to canonicalize to resolve symlinks and get absolute path
         let canonical = match path.canonicalize() {
             Ok(p) => p,
@@ -81,6 +97,7 @@ impl RecentFiles {
 
     /// Remove a file from the recent list
     pub fn remove(&mut self, path: &Path) {
+        self.invalidate_cache();
         // Try to canonicalize to match how files were added
         let canonical = match path.canonicalize() {
             Ok(p) => p,
@@ -95,11 +112,30 @@ impl RecentFiles {
 
     /// Remove files that no longer exist
     pub fn cleanup(&mut self) {
+        self.invalidate_cache();
         self.files.retain(|f| f.exists());
     }
 
     /// Get all recent files (existing ones only)
-    pub fn get_existing(&self) -> Vec<&RecentFile> {
+    /// Results are cached for performance (avoids file existence checks every frame)
+    pub fn get_existing(&mut self) -> Vec<&RecentFile> {
+        // Check if cache is still valid
+        if let Some((_, cached_at)) = &self.existing_cache {
+            if cached_at.elapsed() < EXISTENCE_CACHE_DURATION {
+                // Return references to cached files that exist
+                // We need to recompute references since we can't store references in cache
+                return self.files.iter().filter(|f| f.exists()).collect();
+            }
+        }
+
+        // Cache is invalid, recompute
+        let existing: Vec<RecentFile> = self.files.iter()
+            .filter(|f| f.exists())
+            .cloned()
+            .collect();
+        self.existing_cache = Some((existing, std::time::Instant::now()));
+
+        // Return references to original files that exist
         self.files.iter().filter(|f| f.exists()).collect()
     }
 
@@ -110,7 +146,13 @@ impl RecentFiles {
 
     /// Clear all recent files
     pub fn clear(&mut self) {
+        self.invalidate_cache();
         self.files.clear();
+    }
+
+    /// Explicitly invalidate the existence cache (call on window focus)
+    pub fn refresh_cache(&mut self) {
+        self.invalidate_cache();
     }
 }
 

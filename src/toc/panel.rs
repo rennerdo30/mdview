@@ -4,10 +4,47 @@
 
 #![allow(dead_code)]
 
-use egui::{Rounding, Ui, Vec2};
+use egui::{Color32, Rounding, Ui, Vec2};
 
 use super::{TocEntry, TocTree};
 use crate::theme::style::palette;
+
+/// Pre-computed theme colors (computed once per render, not per entry)
+struct TocColors {
+    accent: Color32,
+    bg_hover: Color32,
+    bg_elevated: Color32,
+    text_primary: Color32,
+    text_secondary: Color32,
+    text_muted: Color32,
+    text_disabled: Color32,
+}
+
+impl TocColors {
+    fn new(is_dark: bool) -> Self {
+        if is_dark {
+            Self {
+                accent: palette::ACCENT,
+                bg_hover: palette::BG_HOVER,
+                bg_elevated: palette::BG_ELEVATED,
+                text_primary: palette::TEXT_PRIMARY,
+                text_secondary: palette::TEXT_SECONDARY,
+                text_muted: palette::TEXT_MUTED,
+                text_disabled: palette::TEXT_DISABLED,
+            }
+        } else {
+            Self {
+                accent: palette::light::ACCENT,
+                bg_hover: palette::light::BG_HOVER,
+                bg_elevated: palette::light::BG_ELEVATED,
+                text_primary: palette::light::TEXT_PRIMARY,
+                text_secondary: palette::light::TEXT_SECONDARY,
+                text_muted: palette::light::TEXT_MUTED,
+                text_disabled: palette::light::TEXT_DISABLED,
+            }
+        }
+    }
+}
 
 /// TOC panel widget
 pub struct TocPanel {
@@ -43,7 +80,8 @@ impl TocPanel {
             self.collapsed.resize(toc.len(), false);
         }
 
-        let text_disabled = if is_dark { palette::TEXT_DISABLED } else { palette::light::TEXT_DISABLED };
+        // Pre-compute colors once per render (not per entry)
+        let colors = TocColors::new(is_dark);
 
         if toc.is_empty() {
             ui.add_space(16.0);
@@ -51,7 +89,7 @@ impl TocPanel {
                 ui.add_space(16.0);
                 ui.label(
                     egui::RichText::new("No headings")
-                        .color(text_disabled)
+                        .color(colors.text_disabled)
                         .italics()
                 );
             });
@@ -94,7 +132,7 @@ impl TocPanel {
             .show(ui, |ui| {
                 ui.add_space(4.0);
                 for entry in &toc.entries {
-                    if let Some(idx) = self.render_entry(ui, entry, current_heading, self.focused_index, 0, is_dark) {
+                    if let Some(idx) = self.render_entry(ui, entry, current_heading, self.focused_index, 0, &colors) {
                         clicked = Some(idx);
                         self.focused_index = Some(idx);
                     }
@@ -178,6 +216,7 @@ impl TocPanel {
     }
 
     /// Render a single TOC entry and its children recursively
+    /// Uses pre-computed colors to avoid per-entry color lookups
     fn render_entry(
         &mut self,
         ui: &mut Ui,
@@ -185,7 +224,7 @@ impl TocPanel {
         current_heading: Option<usize>,
         focused_index: Option<usize>,
         depth: usize,
-        is_dark: bool,
+        colors: &TocColors,
     ) -> Option<usize> {
         let mut clicked = None;
         let base_indent = 16.0;
@@ -193,14 +232,6 @@ impl TocPanel {
         let is_current = current_heading == Some(entry.index);
         let is_focused = focused_index == Some(entry.index);
         let has_children = !entry.children.is_empty();
-
-        // Theme-aware colors
-        let accent = if is_dark { palette::ACCENT } else { palette::light::ACCENT };
-        let bg_hover = if is_dark { palette::BG_HOVER } else { palette::light::BG_HOVER };
-        let bg_elevated = if is_dark { palette::BG_ELEVATED } else { palette::light::BG_ELEVATED };
-        let text_primary = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
-        let text_secondary = if is_dark { palette::TEXT_SECONDARY } else { palette::light::TEXT_SECONDARY };
-        let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
 
         // Calculate item height
         let item_height = 28.0;
@@ -223,32 +254,32 @@ impl TocPanel {
             ui.painter().rect_filled(
                 indicator_rect,
                 Rounding::ZERO,
-                accent,
+                colors.accent,
             );
 
             // Subtle background
             ui.painter().rect_filled(
                 rect,
                 Rounding::ZERO,
-                bg_hover,
+                colors.bg_hover,
             );
         } else if is_focused {
             // Focus indicator - dotted border effect
             ui.painter().rect_stroke(
                 rect.shrink(1.0),
                 Rounding::same(2.0),
-                egui::Stroke::new(1.0, accent),
+                egui::Stroke::new(1.0, colors.accent),
             );
             ui.painter().rect_filled(
                 rect,
                 Rounding::ZERO,
-                bg_elevated,
+                colors.bg_elevated,
             );
         } else if is_hovered {
             ui.painter().rect_filled(
                 rect,
                 Rounding::ZERO,
-                bg_elevated,
+                colors.bg_elevated,
             );
         }
 
@@ -267,7 +298,7 @@ impl TocPanel {
                 egui::Align2::CENTER_CENTER,
                 toggle_text,
                 egui::FontId::proportional(11.0),
-                if toggle_response.hovered() { text_primary } else { text_muted },
+                if toggle_response.hovered() { colors.text_primary } else { colors.text_muted },
             );
 
             if toggle_response.clicked() {
@@ -279,11 +310,11 @@ impl TocPanel {
 
         // Entry text
         let text_color = if is_current {
-            accent
+            colors.accent
         } else if is_hovered {
-            text_primary
+            colors.text_primary
         } else {
-            text_secondary
+            colors.text_secondary
         };
 
         let font_size = match entry.level {
@@ -318,7 +349,7 @@ impl TocPanel {
         let collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
         if has_children && !collapsed {
             for child in &entry.children {
-                if let Some(idx) = self.render_entry(ui, child, current_heading, focused_index, depth + 1, is_dark) {
+                if let Some(idx) = self.render_entry(ui, child, current_heading, focused_index, depth + 1, colors) {
                     clicked = Some(idx);
                 }
             }

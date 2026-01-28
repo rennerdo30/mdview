@@ -184,7 +184,7 @@ impl AppState {
                             if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
                                 for entry in entries.flatten() {
                                     let path = entry.path();
-                                    if path.extension().map_or(false, |e| e == "lua") {
+                                    if path.extension().is_some_and(|e| e == "lua") {
                                         if let Err(e) = runtime.load_plugin(&path) {
                                             let err_msg = e.to_string();
                                             log::error!("Failed to load plugin {:?}: {}", path, err_msg);
@@ -309,8 +309,9 @@ impl AppState {
         let content = std::fs::read_to_string(&path)?;
         let content_hash = compute_content_hash(&content);
 
-        // Parse TOC
-        let toc = crate::toc::builder::build_toc(&content);
+        // Parse markdown events once and reuse for TOC (avoids duplicate parsing)
+        let cached = CachedMarkdown::new(&content, &self.config);
+        let toc = crate::toc::builder::build_toc_from_events(cached.events.iter());
 
         // Load annotations with improved error handling
         let annotations = match crate::annotations::storage::load_annotations(&path) {
@@ -334,7 +335,7 @@ impl AppState {
         self.current_file = Some(path.clone());
         self.content = Arc::new(content);
         self.content_hash = content_hash;
-        self.cached_markdown = None; // Invalidate cache
+        self.cached_markdown = Some(cached); // Reuse pre-computed cache
         self.toc = toc;
         self.annotations = annotations;
         self.heading_positions.clear();
@@ -462,9 +463,14 @@ impl AppState {
     }
 
     /// Get pending plugin notifications and set them as status messages
+    /// Uses dirty flag to skip processing when nothing is pending (avoids work every frame)
     #[cfg(feature = "plugins")]
     pub fn process_plugin_notifications(&mut self) {
         if let Some(ref runtime) = self.plugin_runtime {
+            // Quick check to avoid unnecessary work
+            if !runtime.has_pending_notifications() {
+                return;
+            }
             let notifications = runtime.take_notifications();
             for (msg, level) in notifications {
                 let prefix = match level.as_str() {
@@ -478,12 +484,17 @@ impl AppState {
     }
 
     /// Process pending annotation actions from plugins
+    /// Uses dirty flag to skip processing when nothing is pending
     #[cfg(feature = "plugins")]
     pub fn process_plugin_annotations(&mut self) {
         use crate::annotations::model::Annotation;
         use crate::plugin::api::PendingAnnotationAction;
 
         if let Some(ref runtime) = self.plugin_runtime {
+            // Quick check to avoid unnecessary work
+            if !runtime.has_pending_annotations() {
+                return;
+            }
             let actions = runtime.take_pending_annotations();
             let mut added = false;
 
@@ -515,8 +526,16 @@ impl AppState {
 
     /// Process pending config changes from plugins
     /// Returns true if any config was changed
+    /// Uses dirty flag to skip processing when nothing is pending
     #[cfg(feature = "plugins")]
     pub fn process_plugin_config_changes(&mut self) -> bool {
+        if let Some(ref runtime) = self.plugin_runtime {
+            // Quick check to avoid unnecessary work
+            if !runtime.has_pending_config_changes() {
+                return false;
+            }
+        }
+
         let mut changed = false;
 
         if let Some(ref runtime) = self.plugin_runtime {

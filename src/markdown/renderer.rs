@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::time::Duration;
+
+use indexmap::IndexMap;
 
 use egui::{Color32, RichText, TextureHandle, Ui, Vec2};
 use pulldown_cmark::{Alignment, Event, Tag, TagEnd, CodeBlockKind};
@@ -58,6 +61,12 @@ impl<'a> AnnotationIndex<'a> {
 
 /// Result of an async mermaid render
 type MermaidRenderResult = (String, Result<Vec<u8>, String>);
+
+/// Result of an async image load
+type ImageLoadResult = (String, Result<Vec<u8>, String>);
+
+/// HTTP timeout for remote image fetching (10 seconds)
+const IMAGE_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Cached mermaid diagram metadata (avoid re-parsing every frame)
 #[derive(Clone)]
@@ -173,11 +182,18 @@ pub struct MarkdownRenderer {
     /// Base path for resolving relative image paths
     base_path: Option<PathBuf>,
 
-    /// Image texture cache (max IMAGE_CACHE_MAX_SIZE entries)
-    image_cache: HashMap<String, TextureHandle>,
+    /// Image texture cache with LRU ordering (max IMAGE_CACHE_MAX_SIZE entries)
+    /// Using IndexMap for O(1) access and LRU eviction (oldest at front)
+    image_cache: IndexMap<String, TextureHandle>,
 
-    /// LRU tracking for image cache (oldest at front)
-    image_cache_order: std::collections::VecDeque<String>,
+    /// Set of images currently being loaded asynchronously
+    image_pending: std::collections::HashSet<String>,
+
+    /// Channel sender for spawning async image loads
+    image_sender: mpsc::Sender<ImageLoadResult>,
+
+    /// Channel receiver for completed async image loads
+    image_receiver: mpsc::Receiver<ImageLoadResult>,
 
     /// Footnote definitions collected during rendering
     footnote_definitions: Vec<(String, String)>,
@@ -219,14 +235,11 @@ pub struct MarkdownRenderer {
     /// Channel receiver for completed async mermaid renders
     mermaid_receiver: mpsc::Receiver<MermaidRenderResult>,
 
-    /// Cache for syntax-highlighted code blocks
+    /// Cache for syntax-highlighted code blocks with LRU ordering
     /// Key: (code_hash, language, theme_name)
+    /// Using IndexMap for O(1) access and LRU eviction
     #[cfg(feature = "syntax-highlighting")]
-    syntax_cache: HashMap<String, egui::text::LayoutJob>,
-
-    /// LRU tracking for syntax cache (oldest at front)
-    #[cfg(feature = "syntax-highlighting")]
-    syntax_cache_order: std::collections::VecDeque<String>,
+    syntax_cache: IndexMap<String, egui::text::LayoutJob>,
 
     /// Cache for mermaid diagram metadata (avoids re-parsing every frame)
     mermaid_metadata_cache: HashMap<String, MermaidMetadata>,
@@ -240,7 +253,8 @@ pub struct MarkdownRenderer {
 
 impl MarkdownRenderer {
     pub fn new() -> Self {
-        let (sender, receiver) = mpsc::channel();
+        let (mermaid_sender, mermaid_receiver) = mpsc::channel();
+        let (image_sender, image_receiver) = mpsc::channel();
         Self {
             text_buffer: String::new(),
             heading_level: 0,
@@ -262,8 +276,10 @@ impl MarkdownRenderer {
             in_table_head: false,
             task_list_marker: None,
             base_path: None,
-            image_cache: HashMap::new(),
-            image_cache_order: std::collections::VecDeque::new(),
+            image_cache: IndexMap::new(),
+            image_pending: std::collections::HashSet::new(),
+            image_sender,
+            image_receiver,
             footnote_definitions: Vec::new(),
             current_footnote: None,
             in_footnote_definition: false,
@@ -275,12 +291,10 @@ impl MarkdownRenderer {
             code_block_count: 0,
             mermaid_failed: std::collections::HashSet::new(),
             mermaid_pending: std::collections::HashSet::new(),
-            mermaid_sender: sender,
-            mermaid_receiver: receiver,
+            mermaid_sender,
+            mermaid_receiver,
             #[cfg(feature = "syntax-highlighting")]
-            syntax_cache: HashMap::new(),
-            #[cfg(feature = "syntax-highlighting")]
-            syntax_cache_order: std::collections::VecDeque::new(),
+            syntax_cache: IndexMap::new(),
             mermaid_metadata_cache: HashMap::new(),
             visible_rect: None,
             image_max_width: Some(600.0),
@@ -308,33 +322,71 @@ impl MarkdownRenderer {
     /// Clear the image cache (call when document changes)
     pub fn clear_image_cache(&mut self) {
         self.image_cache.clear();
-        self.image_cache_order.clear();
+        self.image_pending.clear();
         self.mermaid_failed.clear();
         self.mermaid_pending.clear();
     }
 
-    /// Insert an image into the cache with LRU eviction
+    /// Insert an image into the cache with LRU eviction (O(1) operations using IndexMap)
     fn cache_image(&mut self, key: String, texture: TextureHandle) {
-        // If key already exists, remove it from order tracking (will be re-added at end)
+        // If key already exists, move to end for LRU (O(1) with IndexMap)
         if self.image_cache.contains_key(&key) {
-            self.image_cache_order.retain(|k| k != &key);
+            self.image_cache.shift_remove(&key);
         }
 
-        // Evict oldest entries if at capacity
+        // Evict oldest entries if at capacity (oldest is at front of IndexMap)
         while self.image_cache.len() >= IMAGE_CACHE_MAX_SIZE {
-            if let Some(oldest_key) = self.image_cache_order.pop_front() {
-                self.image_cache.remove(&oldest_key);
-            } else {
-                break;
+            self.image_cache.shift_remove_index(0);
+        }
+
+        // Insert new entry at end (most recently used)
+        self.image_cache.insert(key, texture);
+    }
+
+    /// Poll for completed async image loads
+    /// Call this at the start of each frame to process completed loads
+    /// Returns true if any loads completed (UI should repaint)
+    pub fn poll_image_loads(&mut self, ctx: &egui::Context) -> bool {
+        let mut any_completed = false;
+
+        // Process all available completed loads
+        while let Ok((cache_key, result)) = self.image_receiver.try_recv() {
+            self.image_pending.remove(&cache_key);
+            any_completed = true;
+
+            match result {
+                Ok(image_data) => {
+                    // Load texture from image bytes
+                    if let Ok(img) = image::load_from_memory(&image_data) {
+                        let rgba = img.to_rgba8();
+                        let size = [rgba.width() as usize, rgba.height() as usize];
+                        let pixels = rgba.into_raw();
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                        let texture = ctx.load_texture(
+                            &cache_key,
+                            color_image,
+                            egui::TextureOptions::LINEAR,
+                        );
+                        self.cache_image(cache_key.clone(), texture);
+                        log::debug!("Async image load completed: {}", cache_key);
+                    } else {
+                        log::warn!("Failed to decode async image: {}", cache_key);
+                    }
+                }
+                Err(e) => {
+                    log::debug!("Async image load failed: {} - {}", cache_key, e);
+                }
             }
         }
 
-        // Insert new entry
-        self.image_cache.insert(key.clone(), texture);
-        self.image_cache_order.push_back(key);
+        if any_completed {
+            ctx.request_repaint();
+        }
+
+        any_completed
     }
 
-    /// Get syntax-highlighted code block with caching
+    /// Get syntax-highlighted code block with caching (O(1) LRU using IndexMap)
     /// Returns cached LayoutJob if available, otherwise computes and caches it
     #[cfg(feature = "syntax-highlighting")]
     fn get_highlighted_code(
@@ -353,29 +405,24 @@ impl MarkdownRenderer {
             hex::encode(&hasher.finalize()[..12])
         };
 
-        // Check cache first
-        if let Some(job) = self.syntax_cache.get(&cache_key) {
-            return Some(job.clone());
+        // Check cache first - if found, move to end for LRU (O(1) with IndexMap)
+        if let Some(job) = self.syntax_cache.get(&cache_key).cloned() {
+            // Move to end for LRU tracking (most recently used)
+            self.syntax_cache.shift_remove(&cache_key);
+            self.syntax_cache.insert(cache_key, job.clone());
+            return Some(job);
         }
 
         // Cache miss - compute syntax highlighting
         let job = highlight_code(code, language, theme_name)?;
 
-        // Cache with LRU eviction
-        if self.syntax_cache.contains_key(&cache_key) {
-            self.syntax_cache_order.retain(|k| k != &cache_key);
-        }
-
+        // Cache with LRU eviction (O(1) operations)
         while self.syntax_cache.len() >= SYNTAX_CACHE_MAX_SIZE {
-            if let Some(oldest) = self.syntax_cache_order.pop_front() {
-                self.syntax_cache.remove(&oldest);
-            } else {
-                break;
-            }
+            // Remove oldest (first) entry
+            self.syntax_cache.shift_remove_index(0);
         }
 
-        self.syntax_cache.insert(cache_key.clone(), job.clone());
-        self.syntax_cache_order.push_back(cache_key);
+        self.syntax_cache.insert(cache_key, job.clone());
 
         Some(job)
     }
@@ -389,9 +436,8 @@ impl MarkdownRenderer {
     /// Useful when user installs mermaid-cli and wants to retry without reloading document
     #[allow(dead_code)]
     pub fn clear_mermaid_cache(&mut self) {
-        // Remove only mermaid entries from image cache and order tracking
+        // Remove only mermaid entries from image cache (O(n) but rarely called)
         self.image_cache.retain(|k, _| !k.starts_with("mermaid_"));
-        self.image_cache_order.retain(|k| !k.starts_with("mermaid_"));
         self.mermaid_failed.clear();
         self.mermaid_pending.clear();
         self.mermaid_metadata_cache.clear();
@@ -966,15 +1012,15 @@ impl MarkdownRenderer {
         // No need to re-sort or re-filter
 
         // Find highlight color for a given position using sorted annotations (early exit)
+        // Uses pre-parsed RGBA from Annotation to avoid parsing hex every frame
         let get_highlight_color = |char_pos: usize| -> Option<Color32> {
             for ann in annotations {
                 if ann.start > char_pos {
                     break; // No more candidates (sorted by start)
                 }
                 if ann.kind == AnnotationKind::Highlight && ann.contains(char_pos) {
-                    let color = ann.color.as_deref().unwrap_or("#ffeb3b");
-                    let c = crate::annotations::ui::parse_hex_color(color);
-                    return Some(Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 80));
+                    let (r, g, b, _) = ann.get_color_rgba();
+                    return Some(Color32::from_rgba_unmultiplied(r, g, b, 80));
                 }
             }
             None
@@ -2012,7 +2058,7 @@ impl MarkdownRenderer {
         let cursor_y = ui.cursor().top();
         let is_visible = self.is_position_visible(cursor_y);
 
-        // Check if we have this image cached
+        // Check if we have this image cached (O(1) lookup with IndexMap)
         if let Some(texture) = self.image_cache.get(url) {
             let size = texture.size_vec2();
             // Scale to fit width if needed
@@ -2037,60 +2083,84 @@ impl MarkdownRenderer {
 
         // Check if it's a remote URL
         let is_remote = url.starts_with("http://") || url.starts_with("https://");
+        let cache_key = url.to_string();
 
-        // Viewport culling: only load images if visible (or they'll be cached for when user scrolls)
+        // Check if already loading asynchronously
+        if self.image_pending.contains(&cache_key) {
+            // Show loading placeholder
+            self.render_image_loading_placeholder(ui, title, is_remote);
+            return;
+        }
+
+        // Viewport culling: only start loading images if visible
         if is_visible {
             if is_remote {
-                // Try to fetch and load remote image
-                if let Some(image_data) = self.fetch_remote_image(url) {
-                    if let Ok(texture) = load_image_from_memory(ui.ctx(), &image_data, url) {
-                        let size = texture.size_vec2();
-                        let max_width = ui.available_width().min(self.image_max_width.unwrap_or(600.0));
-                        let scale = if size.x > max_width {
-                            max_width / size.x
-                        } else {
-                            1.0
-                        };
-                        let display_size = Vec2::new(size.x * scale, size.y * scale);
-                        ui.image((texture.id(), display_size));
-                        if !title.is_empty() {
-                            ui.label(
-                                RichText::new(title)
-                                    .italics()
-                                    .small()
-                                    .color(Color32::from_gray(150)),
-                            );
-                        }
-                        // Cache for future frames
-                        self.cache_image(url.to_string(), texture);
-                        return;
-                    }
-                }
+                // Spawn async load for remote image
+                self.image_pending.insert(cache_key.clone());
+                let url_owned = url.to_string();
+                let key_owned = cache_key.clone();
+                let sender = self.image_sender.clone();
+                let ctx = ui.ctx().clone();
+
+                std::thread::spawn(move || {
+                    let result = fetch_remote_image_async(&url_owned);
+                    let _ = sender.send((key_owned, result));
+                    ctx.request_repaint();
+                });
+
+                // Show loading state for this frame
+                self.render_image_loading_placeholder(ui, title, is_remote);
+                return;
             } else {
-                // Try to load from local path
+                // Try to resolve local path
                 let image_path = self.resolve_image_path(url);
 
                 if let Some(path) = image_path {
-                    if let Ok(texture) = load_image_texture(ui.ctx(), &path, url) {
-                        let size = texture.size_vec2();
-                        let max_width = ui.available_width().min(self.image_max_width.unwrap_or(600.0));
-                        let scale = if size.x > max_width {
-                            max_width / size.x
-                        } else {
-                            1.0
-                        };
-                        let display_size = Vec2::new(size.x * scale, size.y * scale);
-                        ui.image((texture.id(), display_size));
-                        if !title.is_empty() {
-                            ui.label(
-                                RichText::new(title)
-                                    .italics()
-                                    .small()
-                                    .color(Color32::from_gray(150)),
-                            );
+                    // Check file size - for small files, load synchronously
+                    // For larger files (>1MB), load asynchronously to avoid UI stutter
+                    let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+
+                    if file_size < 1_000_000 {
+                        // Small file - load synchronously (fast enough)
+                        if let Ok(texture) = load_image_texture(ui.ctx(), &path, url) {
+                            let size = texture.size_vec2();
+                            let max_width = ui.available_width().min(self.image_max_width.unwrap_or(600.0));
+                            let scale = if size.x > max_width {
+                                max_width / size.x
+                            } else {
+                                1.0
+                            };
+                            let display_size = Vec2::new(size.x * scale, size.y * scale);
+                            ui.image((texture.id(), display_size));
+                            if !title.is_empty() {
+                                ui.label(
+                                    RichText::new(title)
+                                        .italics()
+                                        .small()
+                                        .color(Color32::from_gray(150)),
+                                );
+                            }
+                            self.cache_image(cache_key, texture);
+                            return;
                         }
-                        // Cache for future frames
-                        self.cache_image(url.to_string(), texture);
+                    } else {
+                        // Large file - load asynchronously
+                        self.image_pending.insert(cache_key.clone());
+                        let key_owned = cache_key.clone();
+                        let sender = self.image_sender.clone();
+                        let ctx = ui.ctx().clone();
+
+                        std::thread::spawn(move || {
+                            let result = match std::fs::read(&path) {
+                                Ok(data) => Ok(data),
+                                Err(e) => Err(format!("Failed to read file: {}", e)),
+                            };
+                            let _ = sender.send((key_owned, result));
+                            ctx.request_repaint();
+                        });
+
+                        // Show loading state for this frame
+                        self.render_image_loading_placeholder(ui, title, is_remote);
                         return;
                     }
                 }
@@ -2103,7 +2173,7 @@ impl MarkdownRenderer {
             let display_text = if !title.is_empty() {
                 title.to_string()
             } else if is_remote {
-                format!("[Loading failed: {}]", truncate_url(url, 50))
+                format!("[Loading: {}]", truncate_url(url, 50))
             } else {
                 format!("[Image not found: {}]", url)
             };
@@ -2113,6 +2183,39 @@ impl MarkdownRenderer {
                     .color(Color32::from_gray(150)),
             );
         });
+    }
+
+    /// Render a loading placeholder for images being fetched asynchronously
+    fn render_image_loading_placeholder(&self, ui: &mut Ui, title: &str, is_remote: bool) {
+        ui.horizontal(|ui| {
+            // Animated spinner
+            let time = ui.ctx().input(|i| i.time);
+            let spinner_char = match ((time * 4.0) as usize) % 4 {
+                0 => "◐",
+                1 => "◓",
+                2 => "◑",
+                _ => "◒",
+            };
+            ui.label(
+                RichText::new(spinner_char)
+                    .size(20.0)
+                    .color(Color32::from_rgb(100, 140, 200))
+            );
+            let display_text = if !title.is_empty() {
+                format!("Loading: {}", title)
+            } else if is_remote {
+                "Loading remote image...".to_string()
+            } else {
+                "Loading image...".to_string()
+            };
+            ui.label(
+                RichText::new(display_text)
+                    .italics()
+                    .color(Color32::from_gray(150)),
+            );
+        });
+        // Request repaint to animate spinner
+        ui.ctx().request_repaint();
     }
 
     /// Resolve an image URL to a local path
@@ -2148,37 +2251,6 @@ impl MarkdownRenderer {
         None
     }
 
-    /// Fetch a remote image and cache it locally
-    fn fetch_remote_image(&self, url: &str) -> Option<Vec<u8>> {
-        // Use ureq to fetch the image
-        let response = match ureq::get(url).call() {
-            Ok(resp) => resp,
-            Err(e) => {
-                log::warn!("Failed to fetch remote image {}: {}", url, e);
-                return None;
-            }
-        };
-
-        // Check content type
-        let content_type = response.content_type();
-        if !content_type.starts_with("image/") {
-            log::warn!("Remote URL {} is not an image (content-type: {})", url, content_type);
-            return None;
-        }
-
-        // Limit size to 10MB
-        let max_size = 10 * 1024 * 1024;
-        let mut bytes = Vec::new();
-
-        // Read with size limit
-        match response.into_reader().take(max_size as u64).read_to_end(&mut bytes) {
-            Ok(_) => Some(bytes),
-            Err(e) => {
-                log::warn!("Failed to read remote image {}: {}", url, e);
-                None
-            }
-        }
-    }
 
     fn render_horizontal_rule(&self, ui: &mut Ui) {
         ui.add_space(8.0);
@@ -2342,6 +2414,37 @@ fn truncate_url(url: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &url[..max_len - 3])
     }
+}
+
+/// Fetch a remote image asynchronously with timeout (called from background thread)
+/// Returns Ok(bytes) on success, Err(message) on failure
+fn fetch_remote_image_async(url: &str) -> Result<Vec<u8>, String> {
+    // Use ureq with timeout to prevent indefinite blocking
+    let agent = ureq::AgentBuilder::new()
+        .timeout_read(IMAGE_FETCH_TIMEOUT)
+        .timeout_write(IMAGE_FETCH_TIMEOUT)
+        .build();
+
+    let response = agent.get(url).call()
+        .map_err(|e| format!("Failed to fetch: {}", e))?;
+
+    // Check content type
+    let content_type = response.content_type();
+    if !content_type.starts_with("image/") {
+        return Err(format!("Not an image (content-type: {})", content_type));
+    }
+
+    // Limit size to 10MB
+    let max_size = 10 * 1024 * 1024;
+    let mut bytes = Vec::new();
+
+    // Read with size limit
+    response.into_reader()
+        .take(max_size as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read: {}", e))?;
+
+    Ok(bytes)
 }
 
 /// Detect the type of Mermaid diagram from its source code
