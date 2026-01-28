@@ -8,7 +8,7 @@ use muda::{
 };
 
 /// Menu action events sent to the application
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MenuAction {
     Open,
     OpenFolder,
@@ -24,6 +24,8 @@ pub enum MenuAction {
     ZoomReset,
     About,
     CheckUpdates,
+    /// Set reading width (None = full width)
+    SetReadingWidth(Option<f32>),
 }
 
 /// Native menu bar manager
@@ -33,20 +35,24 @@ pub struct NativeMenuBar {
     receiver: MenuEventReceiver,
     #[cfg(windows)]
     initialized: bool,
-    // Store menu IDs for matching events
-    open_id: muda::MenuId,
-    open_folder_id: muda::MenuId,
-    reload_id: muda::MenuId,
-    close_id: muda::MenuId,
-    export_pdf_id: muda::MenuId,
-    edit_config_id: muda::MenuId,
-    toggle_toc_id: muda::MenuId,
-    toggle_browser_id: muda::MenuId,
-    zoom_in_id: muda::MenuId,
-    zoom_out_id: muda::MenuId,
-    zoom_reset_id: muda::MenuId,
-    about_id: muda::MenuId,
-    check_updates_id: muda::MenuId,
+    // Store menu items for state updates and event matching
+    open_item: MenuItem,
+    open_folder_item: MenuItem,
+    reload_item: MenuItem,
+    close_item: MenuItem,
+    export_pdf_item: MenuItem,
+    edit_config_item: MenuItem,
+    toggle_toc_item: MenuItem,
+    toggle_browser_item: MenuItem,
+    zoom_in_item: MenuItem,
+    zoom_out_item: MenuItem,
+    zoom_reset_item: MenuItem,
+    about_item: MenuItem,
+    check_updates_item: MenuItem,
+    // Reading width menu items
+    width_full_item: MenuItem,
+    width_comfortable_item: MenuItem,
+    width_narrow_item: MenuItem,
 }
 
 /// Helper to create command/ctrl accelerator
@@ -82,13 +88,6 @@ impl NativeMenuBar {
         let export_pdf_item = MenuItem::new("Export as PDF...", true, Some(cmd_shift_accel(Code::KeyE)));
         let edit_config_item = MenuItem::new("Edit Config...", true, Some(cmd_accel(Code::Comma)));
 
-        let open_id = open_item.id().clone();
-        let open_folder_id = open_folder_item.id().clone();
-        let reload_id = reload_item.id().clone();
-        let close_id = close_item.id().clone();
-        let export_pdf_id = export_pdf_item.id().clone();
-        let edit_config_id = edit_config_item.id().clone();
-
         let _ = file_menu.append(&open_item);
         let _ = file_menu.append(&open_folder_item);
         let _ = file_menu.append(&PredefinedMenuItem::separator());
@@ -116,14 +115,19 @@ impl NativeMenuBar {
         let zoom_out_item = MenuItem::new("Zoom Out", true, Some(cmd_accel(Code::Minus)));
         let zoom_reset_item = MenuItem::new("Reset Zoom", true, Some(cmd_accel(Code::Digit0)));
 
-        let toggle_toc_id = toggle_toc_item.id().clone();
-        let toggle_browser_id = toggle_browser_item.id().clone();
-        let zoom_in_id = zoom_in_item.id().clone();
-        let zoom_out_id = zoom_out_item.id().clone();
-        let zoom_reset_id = zoom_reset_item.id().clone();
+        // Reading Width submenu
+        let reading_width_menu = Submenu::new("Reading Width", true);
+        let width_full_item = MenuItem::new("Full Width", true, None::<Accelerator>);
+        let width_comfortable_item = MenuItem::new("Comfortable (720px)", true, None::<Accelerator>);
+        let width_narrow_item = MenuItem::new("Narrow (560px)", true, None::<Accelerator>);
+        let _ = reading_width_menu.append(&width_full_item);
+        let _ = reading_width_menu.append(&width_comfortable_item);
+        let _ = reading_width_menu.append(&width_narrow_item);
 
         let _ = view_menu.append(&toggle_toc_item);
         let _ = view_menu.append(&toggle_browser_item);
+        let _ = view_menu.append(&PredefinedMenuItem::separator());
+        let _ = view_menu.append(&reading_width_menu);
         let _ = view_menu.append(&PredefinedMenuItem::separator());
         let _ = view_menu.append(&zoom_in_item);
         let _ = view_menu.append(&zoom_out_item);
@@ -134,9 +138,6 @@ impl NativeMenuBar {
 
         let about_item = MenuItem::new("About mdview", true, None::<Accelerator>);
         let check_updates_item = MenuItem::new("Check for Updates...", true, None::<Accelerator>);
-
-        let about_id = about_item.id().clone();
-        let check_updates_id = check_updates_item.id().clone();
 
         let _ = help_menu.append(&about_item);
         let _ = help_menu.append(&check_updates_item);
@@ -176,19 +177,22 @@ impl NativeMenuBar {
             receiver,
             #[cfg(windows)]
             initialized: false,
-            open_id,
-            open_folder_id,
-            reload_id,
-            close_id,
-            export_pdf_id,
-            edit_config_id,
-            toggle_toc_id,
-            toggle_browser_id,
-            zoom_in_id,
-            zoom_out_id,
-            zoom_reset_id,
-            about_id,
-            check_updates_id,
+            open_item,
+            open_folder_item,
+            reload_item,
+            close_item,
+            export_pdf_item,
+            edit_config_item,
+            toggle_toc_item,
+            toggle_browser_item,
+            zoom_in_item,
+            zoom_out_item,
+            zoom_reset_item,
+            about_item,
+            check_updates_item,
+            width_full_item,
+            width_comfortable_item,
+            width_narrow_item,
         })
     }
 
@@ -225,32 +229,38 @@ impl NativeMenuBar {
         while let Ok(event) = self.receiver.try_recv() {
             let id = event.id();
 
-            let action = if id == &self.open_id {
+            let action = if id == self.open_item.id() {
                 Some(MenuAction::Open)
-            } else if id == &self.open_folder_id {
+            } else if id == self.open_folder_item.id() {
                 Some(MenuAction::OpenFolder)
-            } else if id == &self.reload_id {
+            } else if id == self.reload_item.id() {
                 Some(MenuAction::Reload)
-            } else if id == &self.close_id {
+            } else if id == self.close_item.id() {
                 Some(MenuAction::Close)
-            } else if id == &self.export_pdf_id {
+            } else if id == self.export_pdf_item.id() {
                 Some(MenuAction::ExportPdf)
-            } else if id == &self.edit_config_id {
+            } else if id == self.edit_config_item.id() {
                 Some(MenuAction::EditConfig)
-            } else if id == &self.toggle_toc_id {
+            } else if id == self.toggle_toc_item.id() {
                 Some(MenuAction::ToggleToc)
-            } else if id == &self.toggle_browser_id {
+            } else if id == self.toggle_browser_item.id() {
                 Some(MenuAction::ToggleFileBrowser)
-            } else if id == &self.zoom_in_id {
+            } else if id == self.zoom_in_item.id() {
                 Some(MenuAction::ZoomIn)
-            } else if id == &self.zoom_out_id {
+            } else if id == self.zoom_out_item.id() {
                 Some(MenuAction::ZoomOut)
-            } else if id == &self.zoom_reset_id {
+            } else if id == self.zoom_reset_item.id() {
                 Some(MenuAction::ZoomReset)
-            } else if id == &self.about_id {
+            } else if id == self.about_item.id() {
                 Some(MenuAction::About)
-            } else if id == &self.check_updates_id {
+            } else if id == self.check_updates_item.id() {
                 Some(MenuAction::CheckUpdates)
+            } else if id == self.width_full_item.id() {
+                Some(MenuAction::SetReadingWidth(None))
+            } else if id == self.width_comfortable_item.id() {
+                Some(MenuAction::SetReadingWidth(Some(720.0)))
+            } else if id == self.width_narrow_item.id() {
+                Some(MenuAction::SetReadingWidth(Some(560.0)))
             } else {
                 None
             };
@@ -261,5 +271,17 @@ impl NativeMenuBar {
         }
 
         actions
+    }
+
+    /// Update menu item states based on application state
+    /// Call this when the state changes (file opened/closed, etc.)
+    pub fn update_state(&self, has_file: bool, _file_name: Option<&str>) {
+        // Enable/disable items that require a file to be open
+        self.reload_item.set_enabled(has_file);
+        self.close_item.set_enabled(has_file);
+        self.export_pdf_item.set_enabled(has_file);
+
+        // TOC toggle only makes sense with a file open
+        self.toggle_toc_item.set_enabled(has_file);
     }
 }

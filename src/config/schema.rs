@@ -14,6 +14,29 @@ pub struct Config {
     pub export: ExportConfig,
     pub keybindings: KeybindingsConfig,
     pub theme: ThemeConfig,
+    pub layout: LayoutConfig,
+}
+
+/// Layout configuration for content width and margins
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayoutConfig {
+    /// Maximum content width in pixels (None = full width)
+    pub content_width: Option<f32>,
+    /// Maximum image width in pixels (None = content width)
+    pub image_width: Option<f32>,
+    /// Content margins (left/right)
+    pub content_margin: f32,
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        Self {
+            content_width: Some(720.0),
+            image_width: Some(600.0),
+            content_margin: 48.0,
+        }
+    }
 }
 
 

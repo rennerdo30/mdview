@@ -36,9 +36,9 @@ struct Args {
     #[arg(value_name = "PATH")]
     path: Option<PathBuf>,
 
-    /// Theme to use (dark, light, or custom theme name)
-    #[arg(short, long, default_value = "dark")]
-    theme: String,
+    /// Theme to use (dark, light, or custom theme name). Overrides config file.
+    #[arg(short, long)]
+    theme: Option<String>,
 
     /// Disable hot reload / file watching
     #[arg(long)]
@@ -108,7 +108,10 @@ fn main() -> eframe::Result<()> {
         config.general.file_association_asked = false;
         log::info!("File association prompt reset - will ask on next dialog");
     }
-    config.general.theme = args.theme.clone();
+    // Only override theme if explicitly specified on command line
+    if let Some(theme) = &args.theme {
+        config.general.theme = theme.clone();
+    }
 
     // Determine input type (file vs folder)
     let input_type = match &args.path {

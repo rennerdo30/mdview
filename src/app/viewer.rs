@@ -46,6 +46,29 @@ impl CachedKeybindings {
     }
 }
 
+/// Actions triggered by menu interactions, collected during UI rendering
+/// and processed afterwards to avoid borrow conflicts
+#[derive(Default)]
+struct MenuActions {
+    open_dialog: bool,
+    open_folder_dialog: bool,
+    reload: bool,
+    export_pdf: bool,
+    quit: bool,
+    toggle_toc: bool,
+    toggle_file_browser: bool,
+    clear_recent: bool,
+    show_about: bool,
+    edit_config: bool,
+    file_to_open: Option<PathBuf>,
+    new_theme: Option<String>,
+    /// New reading width setting (None = full width)
+    new_reading_width: Option<Option<f32>>,
+    /// Plugin menu item callback to invoke
+    #[cfg(feature = "plugins")]
+    plugin_menu_callback: Option<String>,
+}
+
 /// Parse a keybinding string like "Ctrl+T" or "F5" into Key and Modifiers
 fn parse_keybinding(binding: &str) -> Option<ParsedKeybinding> {
     let parts: Vec<&str> = binding.split('+').map(|s| s.trim()).collect();
@@ -119,15 +142,60 @@ fn is_parsed_keybinding_pressed(ctx: &egui::Context, parsed: &ParsedKeybinding) 
 }
 
 /// Format a file load error with user-friendly messages
-fn format_load_error(e: &std::io::Error) -> String {
+/// Format file operation errors with user-friendly messages
+mod friendly_errors {
     use std::io::ErrorKind;
 
-    match e.kind() {
-        ErrorKind::NotFound => "File not found. It may have been moved or deleted.".to_string(),
-        ErrorKind::PermissionDenied => "Permission denied. Check file permissions.".to_string(),
-        ErrorKind::InvalidData => "File contains invalid data. It may be corrupted.".to_string(),
-        _ => format!("Failed to open file: {}", e),
+    pub fn format_load_error(e: &std::io::Error) -> String {
+        match e.kind() {
+            ErrorKind::NotFound => "File not found. It may have been moved or deleted.".to_string(),
+            ErrorKind::PermissionDenied => "Permission denied. Check file permissions.".to_string(),
+            ErrorKind::InvalidData => "File contains invalid data. It may be corrupted.".to_string(),
+            _ => format!("Could not open file: {}", e),
+        }
     }
+
+    pub fn format_folder_error(e: &std::io::Error) -> String {
+        match e.kind() {
+            ErrorKind::NotFound => "Folder not found. It may have been moved or deleted.".to_string(),
+            ErrorKind::PermissionDenied => "Cannot access folder. Check permissions.".to_string(),
+            _ => format!("Could not open folder: {}", e),
+        }
+    }
+
+    pub fn format_reload_error(e: &std::io::Error) -> String {
+        match e.kind() {
+            ErrorKind::NotFound => "File no longer exists. It may have been deleted.".to_string(),
+            ErrorKind::PermissionDenied => "Cannot reload: permission denied.".to_string(),
+            _ => format!("Reload failed: {}", e),
+        }
+    }
+
+    pub fn format_export_error(e: &crate::export::pdf::PdfError) -> String {
+        match e {
+            crate::export::pdf::PdfError::Io(msg) => {
+                if msg.contains("permission") || msg.contains("Permission") {
+                    "Cannot save PDF: permission denied. Try a different location.".to_string()
+                } else if msg.contains("space") {
+                    "Cannot save PDF: not enough disk space.".to_string()
+                } else {
+                    format!("Could not save PDF: {}", msg)
+                }
+            }
+            crate::export::pdf::PdfError::Pdf(msg) => {
+                format!("PDF generation error: {}", msg)
+            }
+        }
+    }
+
+    pub fn format_config_error(action: &str, e: &impl std::fmt::Display) -> String {
+        format!("Could not {} config file: {}", action, e)
+    }
+
+}
+
+fn format_load_error(e: &std::io::Error) -> String {
+    friendly_errors::format_load_error(e)
 }
 
 /// Platform-specific shortcut helper
@@ -299,6 +367,8 @@ impl MdViewApp {
     /// Set the native menu bar (called from main after app creation)
     pub fn set_native_menu(&mut self, menu: Option<crate::native_menu::NativeMenuBar>) {
         self.native_menu = menu;
+        // Sync state immediately (in case a file was loaded via CLI)
+        self.sync_native_menu_state();
     }
 
     /// Initialize native menu for Windows (called on first frame when we have HWND)
@@ -321,7 +391,7 @@ impl MdViewApp {
     fn open_folder_dialog(&mut self) {
         if let Some(path) = rfd_open_folder() {
             if let Err(e) = self.state.open_folder(path) {
-                self.state.set_status(format!("Failed to open folder: {}", e));
+                self.state.set_status(friendly_errors::format_folder_error(&e));
             } else {
                 self.file_browser_visible = true;
                 self.state.set_status("Folder opened");
@@ -491,7 +561,7 @@ impl MdViewApp {
 
         if should_open_url {
             if let Err(e) = open::that(&update_info.url) {
-                self.state.set_status(format!("Failed to open browser: {}", e));
+                self.state.set_status(format!("Could not open browser: {}", e));
             }
         }
 
@@ -610,7 +680,7 @@ impl MdViewApp {
                 }
                 MenuAction::Reload => {
                     if let Err(e) = self.state.reload_file() {
-                        self.state.set_status(format!("Failed to reload: {}", e));
+                        self.state.set_status(friendly_errors::format_reload_error(&e));
                     }
                 }
                 MenuAction::Close => {
@@ -628,14 +698,14 @@ impl MdViewApp {
                         Ok(config_path) => {
                             if let Err(e) = open::that(&config_path) {
                                 log::error!("Failed to open config file: {}", e);
-                                self.state.set_status(format!("Failed to open config: {}", e));
+                                self.state.set_status(friendly_errors::format_config_error("open", &e));
                             } else {
-                                self.state.set_status(format!("Opened config: {}", config_path.display()));
+                                self.state.set_status(format!("Config file opened: {}", config_path.display()));
                             }
                         }
                         Err(e) => {
                             log::error!("Failed to create config file: {}", e);
-                            self.state.set_status(format!("Failed to create config: {}", e));
+                            self.state.set_status(friendly_errors::format_config_error("create", &e));
                         }
                     }
                 }
@@ -669,7 +739,31 @@ impl MdViewApp {
                     self.update_checker.check_async();
                     self.show_update_dialog = true;
                 }
+                MenuAction::SetReadingWidth(width) => {
+                    self.state.config.layout.content_width = width;
+                    let width_desc = match width {
+                        None => "Full Width".to_string(),
+                        Some(w) => format!("{}px", w as i32),
+                    };
+                    self.state.set_status(format!("Reading width: {}", width_desc));
+                    self.save_config_debounced();
+                }
             }
+        }
+
+        // Sync native menu state after handling actions
+        self.sync_native_menu_state();
+    }
+
+    /// Synchronize native menu item states with application state
+    fn sync_native_menu_state(&self) {
+        if let Some(ref menu) = self.native_menu {
+            let has_file = self.state.current_file.is_some();
+            let file_name = self.state.current_file
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str());
+            menu.update_state(has_file, file_name);
         }
     }
 
@@ -677,15 +771,15 @@ impl MdViewApp {
         // Use cached keybindings for efficiency (avoids parsing strings 60 times/second)
         let kb = &self.cached_keybindings;
 
-        let toggle_toc = kb.toggle_toc.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
-        let export_pdf = kb.export_pdf.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
-        let reload = kb.reload.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
-        let open_file = kb.open_file.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
-        let open_folder = kb.open_folder.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
-        let toggle_file_browser = kb.toggle_file_browser.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
-        let quit = kb.quit.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
-        let add_annotation = kb.add_annotation.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
-        let add_bookmark = kb.add_bookmark.as_ref().map_or(false, |k| is_parsed_keybinding_pressed(ctx, k));
+        let toggle_toc = kb.toggle_toc.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
+        let export_pdf = kb.export_pdf.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
+        let reload = kb.reload.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
+        let open_file = kb.open_file.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
+        let open_folder = kb.open_folder.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
+        let toggle_file_browser = kb.toggle_file_browser.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
+        let quit = kb.quit.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
+        let add_annotation = kb.add_annotation.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
+        let add_bookmark = kb.add_bookmark.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
         let escape = ctx.input(|i| i.key_pressed(Key::Escape));
 
         if toggle_toc {
@@ -704,11 +798,11 @@ impl MdViewApp {
 
         if reload {
             if self.state.file_deleted {
-                self.state.set_status("Cannot reload: file was deleted");
+                self.state.set_status("Cannot reload: the file was deleted");
             } else if let Err(e) = self.state.reload_file() {
-                self.state.set_status(format!("Reload failed: {}", e));
+                self.state.set_status(friendly_errors::format_reload_error(&e));
             } else {
-                self.state.set_status("Reloaded");
+                self.state.set_status("File reloaded");
             }
         }
 
@@ -771,19 +865,18 @@ impl MdViewApp {
                         self.state.file_deleted = false;
                     }
                     if let Err(e) = self.state.reload_file() {
-                        // Increase status timeout for errors (8 seconds)
-                        self.state.set_status(format!("Hot reload failed: {}", e));
+                        self.state.set_status(friendly_errors::format_reload_error(&e));
                     } else {
-                        self.state.set_status("File reloaded");
+                        self.state.set_status("File updated");
                     }
                 }
                 FileEvent::Removed => {
                     // Mark file as deleted and show persistent warning
                     self.state.file_deleted = true;
-                    self.state.set_status("Warning: File was deleted externally");
+                    self.state.set_status("The file was deleted or moved");
                 }
                 FileEvent::Error(e) => {
-                    self.state.set_status(format!("Watcher error: {}", e));
+                    self.state.set_status(format!("File watcher error: {}", e));
                 }
             }
         }
@@ -794,16 +887,19 @@ impl MdViewApp {
             let pdf_path = file_path.with_extension("pdf");
             let events: Vec<_> = crate::markdown::parser::parse_with_config(&self.state.content, &self.state.config).collect();
 
-            match crate::export::pdf::export_to_pdf(&events, &pdf_path, &self.state.config) {
+            // Get the base path for resolving relative image paths
+            let base_path = file_path.parent();
+
+            match crate::export::pdf::export_to_pdf_with_base(&events, &pdf_path, &self.state.config, base_path) {
                 Ok(()) => {
-                    self.state.set_status(format!("Exported to {}", pdf_path.display()));
+                    self.state.set_status(format!("PDF saved to {}", pdf_path.display()));
                 }
                 Err(e) => {
-                    self.state.set_status(format!("PDF export failed: {}", e));
+                    self.state.set_status(friendly_errors::format_export_error(&e));
                 }
             }
         } else {
-            self.state.set_status("No file open to export");
+            self.state.set_status("Open a file first to export as PDF");
         }
     }
 
@@ -851,7 +947,7 @@ impl MdViewApp {
             if state.config.annotations.auto_save {
                 if let Err(e) = state.save_annotations() {
                     log::error!("Failed to auto-save annotations: {}", e);
-                    state.set_status(format!("Warning: Failed to save annotations: {}", e));
+                    state.set_status("Could not save annotations. Check file permissions.");
                 }
             }
         };
@@ -924,6 +1020,9 @@ impl MdViewApp {
         if let Err(e) = self.state.load_file(path) {
             self.state.set_status(format_load_error(&e));
         }
+
+        // Update native menu state (enable file-specific items)
+        self.sync_native_menu_state();
     }
 
     /// Save config to disk (for persisting changes like zoom level)
@@ -944,21 +1043,16 @@ impl MdViewApp {
             .map(|f| (f.path.clone(), f.display_name().to_string()))
             .collect();
 
-        let mut file_to_open: Option<PathBuf> = None;
-        let mut should_open_dialog = false;
-        let mut should_open_folder_dialog = false;
-        let mut should_reload = false;
-        let mut should_export_pdf = false;
-        let mut should_quit = false;
-        let mut should_toggle_toc = false;
-        let mut should_toggle_file_browser = false;
-        let mut should_clear_recent = false;
-        let mut should_show_about = false;
-        let mut should_edit_config = false;
-        let mut new_theme: Option<String> = None;
-
+        let mut actions = MenuActions::default();
         let current_theme = self.state.current_theme().to_string();
         let folder_is_open = self.state.folder_state.is_open();
+        let toc_visible = self.state.toc_visible();
+        let file_browser_visible = self.file_browser_visible;
+        let current_file_name = self.state.current_file
+            .as_ref()
+            .and_then(|f| f.file_name())
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
 
         let is_dark = ctx.style().visuals.dark_mode;
         let menu_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
@@ -969,184 +1063,291 @@ impl MdViewApp {
                 .inner_margin(egui::Margin::symmetric(12.0, 6.0)))
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
-                    ui.menu_button("File", |ui| {
-                        let open_file_label = format!("Open File...      {}", shortcuts::format("O"));
-                        if ui.button(&open_file_label).clicked() {
-                            should_open_dialog = true;
-                            ui.close_menu();
+                    Self::render_file_menu(ui, &recent_files, &mut actions);
+                    Self::render_view_menu(ui, &current_theme, folder_is_open, toc_visible, file_browser_visible, self.state.config.layout.content_width, &mut actions);
+
+                    // Plugins menu (only if plugins feature enabled and items registered)
+                    #[cfg(feature = "plugins")]
+                    {
+                        let plugin_items = self.state.plugin_runtime.as_ref()
+                            .and_then(|rt| rt.state.lock().ok())
+                            .map(|state| state.menu_items.clone())
+                            .unwrap_or_default();
+
+                        if !plugin_items.is_empty() {
+                            Self::render_plugins_menu(ui, &plugin_items, &mut actions);
                         }
+                    }
 
-                        let open_folder_label = format!("Open Folder...    {}", shortcuts::format_shift("O"));
-                        if ui.button(&open_folder_label).clicked() {
-                            should_open_folder_dialog = true;
-                            ui.close_menu();
-                        }
-
-                        ui.menu_button("Recent Files", |ui| {
-                            if recent_files.is_empty() {
-                                ui.label(egui::RichText::new("No recent files").italics().weak());
-                            } else {
-                                for (path, name) in &recent_files {
-                                    if ui.button(name).on_hover_text(path.display().to_string()).clicked() {
-                                        file_to_open = Some(path.clone());
-                                        ui.close_menu();
-                                    }
-                                }
-                                ui.separator();
-                                if ui.button("Clear Recent").clicked() {
-                                    should_clear_recent = true;
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-
-                        ui.separator();
-
-                        let reload_label = format!("Reload            {}", shortcuts::key_only("F5"));
-                        if ui.button(&reload_label).clicked() {
-                            should_reload = true;
-                            ui.close_menu();
-                        }
-
-                        ui.separator();
-
-                        let export_label = format!("Export PDF        {}", shortcuts::format("P"));
-                        if ui.button(&export_label).clicked() {
-                            should_export_pdf = true;
-                            ui.close_menu();
-                        }
-
-                        ui.separator();
-
-                        if ui.button("Edit Config...").clicked() {
-                            should_edit_config = true;
-                            ui.close_menu();
-                        }
-
-                        ui.separator();
-
-                        let quit_label = format!("Quit              {}", shortcuts::format("Q"));
-                        if ui.button(&quit_label).clicked() {
-                            should_quit = true;
-                        }
-                    });
-
-                    ui.menu_button("View", |ui| {
-                        let toc_shortcut = shortcuts::format("T");
-                        let toc_label = if self.state.toc_visible() {
-                            format!("Hide Contents     {}", toc_shortcut)
-                        } else {
-                            format!("Show Contents     {}", toc_shortcut)
-                        };
-                        if ui.button(&toc_label).clicked() {
-                            should_toggle_toc = true;
-                            ui.close_menu();
-                        }
-
-                        if folder_is_open {
-                            let fb_shortcut = shortcuts::format("E");
-                            let fb_label = if self.file_browser_visible {
-                                format!("Hide File Browser {}", fb_shortcut)
-                            } else {
-                                format!("Show File Browser {}", fb_shortcut)
-                            };
-                            if ui.button(&fb_label).clicked() {
-                                should_toggle_file_browser = true;
-                                ui.close_menu();
-                            }
-                        }
-
-                        ui.separator();
-
-                        ui.menu_button("Theme", |ui| {
-                            let dark_selected = current_theme.to_lowercase() == "dark";
-                            let light_selected = current_theme.to_lowercase() == "light";
-
-                            if ui.selectable_label(dark_selected, "Dark").clicked() {
-                                new_theme = Some("dark".to_string());
-                                ui.close_menu();
-                            }
-                            if ui.selectable_label(light_selected, "Light").clicked() {
-                                new_theme = Some("light".to_string());
-                                ui.close_menu();
-                            }
-                        });
-                    });
-
-                    ui.menu_button("Help", |ui| {
-                        if ui.button("About mdview").clicked() {
-                            should_show_about = true;
-                            ui.close_menu();
-                        }
-                    });
-
-                    // Right-aligned file name
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(file) = &self.state.current_file {
-                            if let Some(name) = file.file_name().and_then(|n| n.to_str()) {
-                                ui.label(
-                                    egui::RichText::new(name)
-                                        .color(palette::TEXT_MUTED)
-                                        .small()
-                                );
-                            }
-                        }
-                    });
+                    Self::render_help_menu(ui, &mut actions);
+                    Self::render_menu_file_name(ui, current_file_name.as_deref());
                 });
             });
 
-        // Handle actions after UI rendering to avoid borrow issues
-        if should_open_dialog {
+        self.handle_menu_actions(ctx, actions);
+    }
+
+    fn render_file_menu(ui: &mut egui::Ui, recent_files: &[(PathBuf, String)], actions: &mut MenuActions) {
+        ui.menu_button("File", |ui| {
+            let open_file_label = format!("Open File...      {}", shortcuts::format("O"));
+            if ui.button(&open_file_label).clicked() {
+                actions.open_dialog = true;
+                ui.close_menu();
+            }
+
+            let open_folder_label = format!("Open Folder...    {}", shortcuts::format_shift("O"));
+            if ui.button(&open_folder_label).clicked() {
+                actions.open_folder_dialog = true;
+                ui.close_menu();
+            }
+
+            ui.menu_button("Recent Files", |ui| {
+                if recent_files.is_empty() {
+                    ui.label(egui::RichText::new("No recent files").italics().weak());
+                } else {
+                    for (path, name) in recent_files {
+                        if ui.button(name).on_hover_text(path.display().to_string()).clicked() {
+                            actions.file_to_open = Some(path.clone());
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Clear Recent").clicked() {
+                        actions.clear_recent = true;
+                        ui.close_menu();
+                    }
+                }
+            });
+
+            ui.separator();
+
+            let reload_label = format!("Reload            {}", shortcuts::key_only("F5"));
+            if ui.button(&reload_label).clicked() {
+                actions.reload = true;
+                ui.close_menu();
+            }
+
+            ui.separator();
+
+            let export_label = format!("Export PDF        {}", shortcuts::format("P"));
+            if ui.button(&export_label).clicked() {
+                actions.export_pdf = true;
+                ui.close_menu();
+            }
+
+            ui.separator();
+
+            if ui.button("Edit Config...").clicked() {
+                actions.edit_config = true;
+                ui.close_menu();
+            }
+
+            ui.separator();
+
+            let quit_label = format!("Quit              {}", shortcuts::format("Q"));
+            if ui.button(&quit_label).clicked() {
+                actions.quit = true;
+            }
+        });
+    }
+
+    fn render_view_menu(
+        ui: &mut egui::Ui,
+        current_theme: &str,
+        folder_is_open: bool,
+        toc_visible: bool,
+        file_browser_visible: bool,
+        content_width: Option<f32>,
+        actions: &mut MenuActions,
+    ) {
+        ui.menu_button("View", |ui| {
+            let toc_shortcut = shortcuts::format("T");
+            let toc_label = if toc_visible {
+                format!("Hide Contents     {}", toc_shortcut)
+            } else {
+                format!("Show Contents     {}", toc_shortcut)
+            };
+            if ui.button(&toc_label).clicked() {
+                actions.toggle_toc = true;
+                ui.close_menu();
+            }
+
+            if folder_is_open {
+                let fb_shortcut = shortcuts::format("E");
+                let fb_label = if file_browser_visible {
+                    format!("Hide File Browser {}", fb_shortcut)
+                } else {
+                    format!("Show File Browser {}", fb_shortcut)
+                };
+                if ui.button(&fb_label).clicked() {
+                    actions.toggle_file_browser = true;
+                    ui.close_menu();
+                }
+            }
+
+            ui.separator();
+
+            ui.menu_button("Reading Width", |ui| {
+                let is_full = content_width.is_none();
+                let is_comfortable = content_width == Some(720.0);
+                let is_narrow = content_width == Some(560.0);
+
+                if ui.selectable_label(is_full, "Full Width").clicked() {
+                    actions.new_reading_width = Some(None);
+                    ui.close_menu();
+                }
+                if ui.selectable_label(is_comfortable, "Comfortable (720px)").clicked() {
+                    actions.new_reading_width = Some(Some(720.0));
+                    ui.close_menu();
+                }
+                if ui.selectable_label(is_narrow, "Narrow (560px)").clicked() {
+                    actions.new_reading_width = Some(Some(560.0));
+                    ui.close_menu();
+                }
+            });
+
+            ui.menu_button("Theme", |ui| {
+                let dark_selected = current_theme.to_lowercase() == "dark";
+                let light_selected = current_theme.to_lowercase() == "light";
+
+                if ui.selectable_label(dark_selected, "Dark").clicked() {
+                    actions.new_theme = Some("dark".to_string());
+                    ui.close_menu();
+                }
+                if ui.selectable_label(light_selected, "Light").clicked() {
+                    actions.new_theme = Some("light".to_string());
+                    ui.close_menu();
+                }
+            });
+        });
+    }
+
+    fn render_help_menu(ui: &mut egui::Ui, actions: &mut MenuActions) {
+        ui.menu_button("Help", |ui| {
+            if ui.button("About mdview").clicked() {
+                actions.show_about = true;
+                ui.close_menu();
+            }
+        });
+    }
+
+    /// Render the Plugins menu with dynamically registered items
+    #[cfg(feature = "plugins")]
+    fn render_plugins_menu(
+        ui: &mut egui::Ui,
+        items: &[crate::plugin::api::PluginMenuItem],
+        actions: &mut MenuActions,
+    ) {
+        ui.menu_button("Plugins", |ui| {
+            for item in items {
+                if ui.button(&item.label).clicked() {
+                    actions.plugin_menu_callback = Some(item.callback.clone());
+                    ui.close_menu();
+                }
+            }
+        });
+    }
+
+    fn render_menu_file_name(ui: &mut egui::Ui, file_name: Option<&str>) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(name) = file_name {
+                ui.label(
+                    egui::RichText::new(name)
+                        .color(palette::TEXT_MUTED)
+                        .small()
+                );
+            }
+        });
+    }
+
+    fn handle_menu_actions(&mut self, ctx: &egui::Context, actions: MenuActions) {
+        if actions.open_dialog {
             self.open_file_dialog();
         }
-        if should_open_folder_dialog {
+        if actions.open_folder_dialog {
             self.open_folder_dialog();
         }
-        if should_reload {
+        if actions.reload {
             let _ = self.state.reload_file();
         }
-        if should_export_pdf {
+        if actions.export_pdf {
             self.export_pdf();
         }
-        if should_quit {
+        if actions.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if should_show_about {
+        if actions.show_about {
             self.show_about_dialog = true;
         }
-        if should_toggle_toc {
+        if actions.toggle_toc {
             self.state.toggle_toc();
         }
-        if should_toggle_file_browser {
+        if actions.toggle_file_browser {
             self.file_browser_visible = !self.file_browser_visible;
         }
-        if should_clear_recent {
+        if actions.clear_recent {
             self.state.recent_files.clear();
             let _ = crate::recent::save_recent_files(&self.state.recent_files);
         }
-        if let Some(path) = file_to_open {
+        if let Some(path) = actions.file_to_open {
             self.load_markdown_file(path);
         }
-        if let Some(theme) = new_theme {
+        if let Some(theme) = actions.new_theme {
             self.state.switch_theme(&theme);
             let style = create_style(&theme, &self.state.config);
             ctx.set_style(style);
             self.state.set_status(format!("Switched to {} theme", theme));
         }
-        if should_edit_config {
-            match crate::config::loader::create_default_config() {
-                Ok(config_path) => {
-                    if let Err(e) = open::that(&config_path) {
-                        log::error!("Failed to open config file: {}", e);
-                        self.state.set_status(format!("Failed to open config: {}", e));
-                    } else {
-                        self.state.set_status(format!("Opened config: {}", config_path.display()));
-                    }
+        if let Some(width) = actions.new_reading_width {
+            self.state.config.layout.content_width = width;
+            let width_desc = match width {
+                None => "Full Width".to_string(),
+                Some(w) => format!("{}px", w as i32),
+            };
+            self.state.set_status(format!("Reading width: {}", width_desc));
+            // Save config
+            if let Some(config_path) = crate::config::loader::get_default_config_path() {
+                if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
+                    log::error!("Failed to save config: {}", e);
                 }
-                Err(e) => {
-                    log::error!("Failed to create config file: {}", e);
-                    self.state.set_status(format!("Failed to create config: {}", e));
+            }
+        }
+        if actions.edit_config {
+            self.handle_edit_config();
+        }
+
+        // Handle plugin menu callbacks
+        #[cfg(feature = "plugins")]
+        if let Some(callback_name) = actions.plugin_menu_callback {
+            self.invoke_plugin_callback(&callback_name);
+        }
+    }
+
+    /// Invoke a Lua callback function registered by a plugin
+    #[cfg(feature = "plugins")]
+    fn invoke_plugin_callback(&mut self, callback_name: &str) {
+        if let Some(ref runtime) = self.state.plugin_runtime {
+            // Call the callback function in Lua globals
+            if let Err(e) = runtime.lua().load(format!("{}()", callback_name)).exec() {
+                log::error!("[plugin] Failed to invoke callback '{}': {}", callback_name, e);
+                self.state.set_status(format!("Plugin error: {}", e));
+            }
+        }
+    }
+
+    fn handle_edit_config(&mut self) {
+        match crate::config::loader::create_default_config() {
+            Ok(config_path) => {
+                if let Err(e) = open::that(&config_path) {
+                    log::error!("Failed to open config file: {}", e);
+                    self.state.set_status(friendly_errors::format_config_error("open", &e));
+                } else {
+                    self.state.set_status(format!("Config file opened: {}", config_path.display()));
                 }
+            }
+            Err(e) => {
+                log::error!("Failed to create config file: {}", e);
+                self.state.set_status(friendly_errors::format_config_error("create", &e));
             }
         }
     }
@@ -1321,6 +1522,12 @@ impl MdViewApp {
                     render_drag_drop_overlay(ui, is_dark);
                 }
 
+                // Show loading indicator
+                if self.state.is_loading {
+                    render_loading_indicator(ui, is_dark);
+                    return;
+                }
+
                 // Show deleted file warning banner
                 if self.state.file_deleted {
                     render_deleted_file_banner(ui, is_dark);
@@ -1351,9 +1558,11 @@ impl MdViewApp {
                     .show(ui, |ui| {
                         ui.add_space(32.0);
                         ui.horizontal(|ui| {
-                            ui.add_space(48.0);
+                            ui.add_space(self.state.config.layout.content_margin);
                             ui.vertical(|ui| {
-                                ui.set_max_width(720.0); // Comfortable reading width
+                                if let Some(width) = self.state.config.layout.content_width {
+                                    ui.set_max_width(width);
+                                }
                                 self.renderer.render_with_scroll_target(
                                     ui,
                                     events.as_slice(),
@@ -1407,6 +1616,44 @@ impl MdViewApp {
             self.load_markdown_file(path);
         }
     }
+}
+
+/// Render a loading indicator (spinner)
+fn render_loading_indicator(ui: &mut egui::Ui, is_dark: bool) {
+    let text_color = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
+    let accent_color = if is_dark {
+        egui::Color32::from_rgb(78, 201, 176)
+    } else {
+        egui::Color32::from_rgb(0, 120, 150)
+    };
+
+    ui.centered_and_justified(|ui| {
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() / 3.0);
+
+            // Animated spinner
+            ui.spinner();
+
+            ui.add_space(16.0);
+
+            ui.label(
+                egui::RichText::new("Loading...")
+                    .size(18.0)
+                    .color(text_color),
+            );
+
+            ui.add_space(8.0);
+
+            ui.label(
+                egui::RichText::new("Opening file")
+                    .size(13.0)
+                    .color(accent_color),
+            );
+        });
+    });
+
+    // Request continuous repainting for spinner animation
+    ui.ctx().request_repaint();
 }
 
 /// Render the drag-and-drop overlay
@@ -1743,7 +1990,12 @@ impl eframe::App for MdViewApp {
         #[cfg(feature = "plugins")]
         if !self.shown_plugin_notification && self.state.has_failed_plugins() {
             let count = self.state.failed_plugin_count();
-            self.state.set_status(format!("Warning: {} plugin(s) failed to load", count));
+            let msg = if count == 1 {
+                "A plugin failed to load. Check logs for details.".to_string()
+            } else {
+                format!("{} plugins failed to load. Check logs for details.", count)
+            };
+            self.state.set_status(msg);
             self.state.clear_failed_plugins();
             self.shown_plugin_notification = true;
         }
@@ -1760,7 +2012,7 @@ impl eframe::App for MdViewApp {
         #[cfg(feature = "plugins")]
         {
             if self.state.process_plugin_config_changes() {
-                let style = create_style(&self.state.current_theme, &self.state.config);
+                let style = create_style(self.state.current_theme(), &self.state.config);
                 ctx.set_style(style);
             }
         }
@@ -1783,7 +2035,7 @@ impl eframe::App for MdViewApp {
             // Check if it's a directory or file
             if path.is_dir() {
                 if let Err(e) = self.state.open_folder(path) {
-                    self.state.set_status(format!("Failed to open folder: {}", e));
+                    self.state.set_status(friendly_errors::format_folder_error(&e));
                 } else {
                     self.file_browser_visible = true;
                     self.state.set_status("Folder opened");
@@ -1821,7 +2073,7 @@ impl eframe::App for MdViewApp {
         // Poll for update check results
         if self.update_checker.poll() {
             // Check if this version was dismissed
-            if let Some(ref info) = self.update_checker.update_info() {
+            if let Some(info) = self.update_checker.update_info() {
                 let dismissed = self.state.config.general.dismissed_update_version
                     .as_ref()
                     .map(|v| v == &info.version)
@@ -1878,7 +2130,7 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
                     if let Ok(font_data) = std::fs::read(&font_path) {
                         fonts.font_data.insert(
                             "custom_body".to_owned(),
-                            egui::FontData::from_owned(font_data).into(),
+                            egui::FontData::from_owned(font_data),
                         );
                         fonts.families.entry(egui::FontFamily::Proportional)
                             .or_default()
@@ -1900,7 +2152,7 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
                     if let Ok(font_data) = std::fs::read(&font_path) {
                         fonts.font_data.insert(
                             "custom_code".to_owned(),
-                            egui::FontData::from_owned(font_data).into(),
+                            egui::FontData::from_owned(font_data),
                         );
                         fonts.families.entry(egui::FontFamily::Monospace)
                             .or_default()
@@ -1930,7 +2182,7 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
             if let Ok(font_data) = std::fs::read(&path) {
                 fonts.font_data.insert(
                     "symbols".to_owned(),
-                    egui::FontData::from_owned(font_data).into(),
+                    egui::FontData::from_owned(font_data),
                 );
                 // Add symbol font with highest priority for proportional text
                 fonts.families.entry(egui::FontFamily::Proportional)
@@ -1963,7 +2215,7 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
             if let Ok(font_data) = std::fs::read(&path) {
                 fonts.font_data.insert(
                     "emoji".to_owned(),
-                    egui::FontData::from_owned(font_data).into(),
+                    egui::FontData::from_owned(font_data),
                 );
                 // Add emoji font with high priority for proportional text
                 fonts.families.entry(egui::FontFamily::Proportional)

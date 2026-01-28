@@ -13,61 +13,64 @@ use crate::annotations::model::{Annotation, AnnotationKind};
 use crate::config::defaults::heading_size_multiplier;
 use crate::config::Config;
 
+/// Maximum number of images to cache (LRU eviction when exceeded)
+const IMAGE_CACHE_MAX_SIZE: usize = 50;
+
+/// Maximum number of syntax-highlighted code blocks to cache
+const SYNTAX_CACHE_MAX_SIZE: usize = 100;
+
 /// Pre-built annotation index for efficient O(log n) lookups
 /// Instead of O(n) scan per character, we build a sorted list of annotation boundaries
-/// Note: Currently the optimization is inlined in render_mixed_content_with_annotations,
-/// but this struct is kept for potential future use with larger annotation sets.
-#[allow(dead_code)]
 struct AnnotationIndex<'a> {
     /// Annotations sorted by start position for binary search
     sorted_annotations: Vec<&'a Annotation>,
 }
 
-#[allow(dead_code)]
 impl<'a> AnnotationIndex<'a> {
-    /// Build an index from annotations in a given range
-    fn new(annotations: &'a AnnotationStore, start: usize, end: usize) -> Self {
-        let mut sorted: Vec<&'a Annotation> = annotations
-            .all()
-            .filter(|a| a.overlaps(start, end))
-            .collect();
+    /// Build an index from all annotations (sorted by start position)
+    fn new(annotations: &'a AnnotationStore) -> Self {
+        let mut sorted: Vec<&'a Annotation> = annotations.all().collect();
         sorted.sort_by_key(|a| a.start);
         Self { sorted_annotations: sorted }
     }
 
-    /// Get highlight color at position using binary search (O(log n))
-    fn get_highlight_color(&self, pos: usize) -> Option<Color32> {
-        // Find annotations that contain this position
-        // Since annotations are sorted by start, we can use binary search to find candidates
-        for ann in &self.sorted_annotations {
-            if ann.start > pos {
-                break; // No more candidates (sorted by start)
-            }
-            if ann.kind == AnnotationKind::Highlight && ann.contains(pos) {
-                let color = ann.color.as_deref().unwrap_or("#ffeb3b");
-                let c = crate::annotations::ui::parse_hex_color(color);
-                return Some(Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 80));
-            }
+    /// Get annotations overlapping a range using binary search
+    /// Returns annotations already sorted by start position
+    fn in_range(&self, start: usize, end: usize) -> Vec<&'a Annotation> {
+        if self.sorted_annotations.is_empty() {
+            return Vec::new();
         }
-        None
-    }
 
-    /// Check if there's a note at position (O(log n))
-    fn has_note_at(&self, pos: usize) -> bool {
-        for ann in &self.sorted_annotations {
-            if ann.start > pos {
-                break;
-            }
-            if ann.kind == AnnotationKind::Note && ann.contains(pos) {
-                return true;
-            }
-        }
-        false
+        // Binary search to find first annotation that might overlap
+        // An annotation overlaps [start, end) if ann.start < end AND ann.end > start
+        let first_idx = self.sorted_annotations
+            .partition_point(|a| a.end <= start);
+
+        // Collect overlapping annotations from this point
+        self.sorted_annotations[first_idx..]
+            .iter()
+            .take_while(|a| a.start < end)
+            .filter(|a| a.overlaps(start, end))
+            .copied()
+            .collect()
     }
 }
 
 /// Result of an async mermaid render
 type MermaidRenderResult = (String, Result<Vec<u8>, String>);
+
+/// Cached mermaid diagram metadata (avoid re-parsing every frame)
+#[derive(Clone)]
+struct MermaidMetadata {
+    /// Type of diagram (flowchart, sequence, etc.)
+    #[allow(dead_code)]
+    diagram_type: String,
+    /// Various counts extracted from the diagram
+    count1: usize,
+    count2: usize,
+    /// Preview nodes for flowchart
+    nodes: Vec<String>,
+}
 
 /// Parse a hex color string from config to Color32
 fn parse_config_hex_color(hex: &str) -> Color32 {
@@ -81,16 +84,10 @@ fn parse_config_hex_color(hex: &str) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-/// Check if the current theme is a dark theme
-fn is_dark_theme(config: &Config) -> bool {
-    !config.general.theme.to_lowercase().eq("light")
-}
-
 /// Theme-aware colors for markdown rendering
 mod theme_colors {
     use egui::Color32;
 
-    // Code block backgrounds
     pub fn code_block_bg(is_dark: bool) -> Color32 {
         if is_dark {
             Color32::from_rgb(30, 35, 45)
@@ -99,29 +96,11 @@ mod theme_colors {
         }
     }
 
-    pub fn code_block_border(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(60, 70, 90)
-        } else {
-            Color32::from_rgb(210, 215, 225)
-        }
-    }
-
-    // Inline code
     pub fn inline_code_text(is_dark: bool) -> Color32 {
         if is_dark {
             Color32::from_rgb(206, 145, 120)
         } else {
             Color32::from_rgb(180, 80, 80)
-        }
-    }
-
-    // Code block text colors
-    pub fn code_text(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(180, 190, 210)
-        } else {
-            Color32::from_rgb(50, 55, 70)
         }
     }
 
@@ -133,70 +112,11 @@ mod theme_colors {
         }
     }
 
-    pub fn code_lang_label(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(255, 154, 162)
-        } else {
-            Color32::from_rgb(180, 60, 80)
-        }
-    }
-
-    // Links
     pub fn link_color(is_dark: bool) -> Color32 {
         if is_dark {
             Color32::from_rgb(78, 201, 176)
         } else {
             Color32::from_rgb(0, 120, 150)
-        }
-    }
-
-    // Blockquote
-    pub fn blockquote_bg(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(45, 50, 65)
-        } else {
-            Color32::from_rgb(240, 245, 250)
-        }
-    }
-
-    pub fn blockquote_border(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(80, 130, 180)
-        } else {
-            Color32::from_rgb(100, 150, 200)
-        }
-    }
-
-    pub fn blockquote_text(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(180, 180, 200)
-        } else {
-            Color32::from_rgb(70, 75, 90)
-        }
-    }
-
-    // Table
-    pub fn table_header_bg(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(40, 45, 55)
-        } else {
-            Color32::from_rgb(235, 240, 245)
-        }
-    }
-
-    pub fn table_border(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(60, 65, 80)
-        } else {
-            Color32::from_rgb(200, 205, 215)
-        }
-    }
-
-    pub fn table_row_alt(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(35, 40, 50)
-        } else {
-            Color32::from_rgb(248, 250, 252)
         }
     }
 }
@@ -253,8 +173,11 @@ pub struct MarkdownRenderer {
     /// Base path for resolving relative image paths
     base_path: Option<PathBuf>,
 
-    /// Image texture cache
+    /// Image texture cache (max IMAGE_CACHE_MAX_SIZE entries)
     image_cache: HashMap<String, TextureHandle>,
+
+    /// LRU tracking for image cache (oldest at front)
+    image_cache_order: std::collections::VecDeque<String>,
 
     /// Footnote definitions collected during rendering
     footnote_definitions: Vec<(String, String)>,
@@ -295,6 +218,24 @@ pub struct MarkdownRenderer {
 
     /// Channel receiver for completed async mermaid renders
     mermaid_receiver: mpsc::Receiver<MermaidRenderResult>,
+
+    /// Cache for syntax-highlighted code blocks
+    /// Key: (code_hash, language, theme_name)
+    #[cfg(feature = "syntax-highlighting")]
+    syntax_cache: HashMap<String, egui::text::LayoutJob>,
+
+    /// LRU tracking for syntax cache (oldest at front)
+    #[cfg(feature = "syntax-highlighting")]
+    syntax_cache_order: std::collections::VecDeque<String>,
+
+    /// Cache for mermaid diagram metadata (avoids re-parsing every frame)
+    mermaid_metadata_cache: HashMap<String, MermaidMetadata>,
+
+    /// Visible rect from last render (for viewport culling)
+    visible_rect: Option<egui::Rect>,
+
+    /// Maximum image width from config (defaults to 600.0)
+    image_max_width: Option<f32>,
 }
 
 impl MarkdownRenderer {
@@ -322,6 +263,7 @@ impl MarkdownRenderer {
             task_list_marker: None,
             base_path: None,
             image_cache: HashMap::new(),
+            image_cache_order: std::collections::VecDeque::new(),
             footnote_definitions: Vec::new(),
             current_footnote: None,
             in_footnote_definition: false,
@@ -335,6 +277,13 @@ impl MarkdownRenderer {
             mermaid_pending: std::collections::HashSet::new(),
             mermaid_sender: sender,
             mermaid_receiver: receiver,
+            #[cfg(feature = "syntax-highlighting")]
+            syntax_cache: HashMap::new(),
+            #[cfg(feature = "syntax-highlighting")]
+            syntax_cache_order: std::collections::VecDeque::new(),
+            mermaid_metadata_cache: HashMap::new(),
+            visible_rect: None,
+            image_max_width: Some(600.0),
         }
     }
 
@@ -343,11 +292,92 @@ impl MarkdownRenderer {
         self.base_path = path;
     }
 
+    /// Check if a vertical position is potentially visible (with buffer for smooth scrolling)
+    /// Returns true if the position might be in or near the visible viewport
+    fn is_position_visible(&self, y_pos: f32) -> bool {
+        match self.visible_rect {
+            Some(rect) => {
+                // Add a buffer (2x viewport height) to avoid popping during scroll
+                let buffer = rect.height() * 2.0;
+                y_pos >= rect.top() - buffer && y_pos <= rect.bottom() + buffer
+            }
+            None => true, // If no rect cached, assume visible
+        }
+    }
+
     /// Clear the image cache (call when document changes)
     pub fn clear_image_cache(&mut self) {
         self.image_cache.clear();
+        self.image_cache_order.clear();
         self.mermaid_failed.clear();
         self.mermaid_pending.clear();
+    }
+
+    /// Insert an image into the cache with LRU eviction
+    fn cache_image(&mut self, key: String, texture: TextureHandle) {
+        // If key already exists, remove it from order tracking (will be re-added at end)
+        if self.image_cache.contains_key(&key) {
+            self.image_cache_order.retain(|k| k != &key);
+        }
+
+        // Evict oldest entries if at capacity
+        while self.image_cache.len() >= IMAGE_CACHE_MAX_SIZE {
+            if let Some(oldest_key) = self.image_cache_order.pop_front() {
+                self.image_cache.remove(&oldest_key);
+            } else {
+                break;
+            }
+        }
+
+        // Insert new entry
+        self.image_cache.insert(key.clone(), texture);
+        self.image_cache_order.push_back(key);
+    }
+
+    /// Get syntax-highlighted code block with caching
+    /// Returns cached LayoutJob if available, otherwise computes and caches it
+    #[cfg(feature = "syntax-highlighting")]
+    fn get_highlighted_code(
+        &mut self,
+        code: &str,
+        language: Option<&str>,
+        theme_name: &str,
+    ) -> Option<egui::text::LayoutJob> {
+        // Generate cache key from code hash + language + theme
+        let cache_key = {
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(code.as_bytes());
+            hasher.update(language.unwrap_or("").as_bytes());
+            hasher.update(theme_name.as_bytes());
+            hex::encode(&hasher.finalize()[..12])
+        };
+
+        // Check cache first
+        if let Some(job) = self.syntax_cache.get(&cache_key) {
+            return Some(job.clone());
+        }
+
+        // Cache miss - compute syntax highlighting
+        let job = highlight_code(code, language, theme_name)?;
+
+        // Cache with LRU eviction
+        if self.syntax_cache.contains_key(&cache_key) {
+            self.syntax_cache_order.retain(|k| k != &cache_key);
+        }
+
+        while self.syntax_cache.len() >= SYNTAX_CACHE_MAX_SIZE {
+            if let Some(oldest) = self.syntax_cache_order.pop_front() {
+                self.syntax_cache.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+
+        self.syntax_cache.insert(cache_key.clone(), job.clone());
+        self.syntax_cache_order.push_back(cache_key);
+
+        Some(job)
     }
 
     /// Get the current character offset (position in document after last rendered element)
@@ -359,10 +389,188 @@ impl MarkdownRenderer {
     /// Useful when user installs mermaid-cli and wants to retry without reloading document
     #[allow(dead_code)]
     pub fn clear_mermaid_cache(&mut self) {
-        // Remove only mermaid entries from image cache
+        // Remove only mermaid entries from image cache and order tracking
         self.image_cache.retain(|k, _| !k.starts_with("mermaid_"));
+        self.image_cache_order.retain(|k| !k.starts_with("mermaid_"));
         self.mermaid_failed.clear();
         self.mermaid_pending.clear();
+        self.mermaid_metadata_cache.clear();
+    }
+
+    /// Get cached mermaid metadata or compute and cache it
+    fn get_mermaid_metadata(&mut self, code: &str, diagram_type: &str) -> MermaidMetadata {
+        // Generate cache key from code hash
+        let cache_key = {
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(code.as_bytes());
+            hex::encode(&hasher.finalize()[..8])
+        };
+
+        // Check cache
+        if let Some(metadata) = self.mermaid_metadata_cache.get(&cache_key) {
+            return metadata.clone();
+        }
+
+        // Compute metadata based on diagram type
+        let metadata = match diagram_type {
+            "flowchart" | "graph" => {
+                let nodes: Vec<String> = code.lines()
+                    .filter(|l| !l.trim().starts_with("graph") && !l.trim().starts_with("flowchart"))
+                    .filter(|l| !l.trim().is_empty())
+                    .take(6)
+                    .map(extract_node_text)
+                    .collect();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: nodes.len(),
+                    count2: 0,
+                    nodes,
+                }
+            }
+            "sequence" => {
+                let participant_count = code.lines()
+                    .filter(|l| l.trim().starts_with("participant") || l.trim().starts_with("actor"))
+                    .count();
+                let arrow_count = code.lines()
+                    .filter(|l| l.contains("->>") || l.contains("-->>") || l.contains("->"))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: participant_count,
+                    count2: arrow_count,
+                    nodes: Vec::new(),
+                }
+            }
+            "class" => {
+                let class_count = code.lines()
+                    .filter(|l| l.trim().starts_with("class "))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: class_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            "state" => {
+                let state_count = code.lines()
+                    .filter(|l| {
+                        let t = l.trim();
+                        t.starts_with("state ") || t.contains(" --> ")
+                    })
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: state_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            "gantt" => {
+                let task_count = code.lines()
+                    .filter(|l| l.contains(':'))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: task_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            "pie" => {
+                let slice_count = code.lines()
+                    .filter(|l| l.trim().starts_with('"'))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: slice_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            "er" | "erDiagram" => {
+                let entity_count = code.lines()
+                    .filter(|l| l.contains('{') || l.contains("||"))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: entity_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            "journey" => {
+                let section_count = code.lines()
+                    .filter(|l| l.trim().starts_with("section"))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: section_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            "gitGraph" => {
+                let commit_count = code.lines()
+                    .filter(|l| l.trim().starts_with("commit"))
+                    .count();
+                let branch_count = code.lines()
+                    .filter(|l| l.trim().starts_with("branch"))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: commit_count,
+                    count2: branch_count,
+                    nodes: Vec::new(),
+                }
+            }
+            "mindmap" => {
+                let node_count = code.lines()
+                    .filter(|l| !l.trim().is_empty() && !l.trim().starts_with("mindmap"))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: node_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            "timeline" => {
+                let event_count = code.lines()
+                    .filter(|l| l.contains(':'))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: event_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            "requirementDiagram" => {
+                let req_count = code.lines()
+                    .filter(|l| l.trim().starts_with("requirement") || l.trim().starts_with("element"))
+                    .count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: req_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+            _ => {
+                let line_count = code.lines().count();
+                MermaidMetadata {
+                    diagram_type: diagram_type.to_string(),
+                    count1: line_count,
+                    count2: 0,
+                    nodes: Vec::new(),
+                }
+            }
+        };
+
+        self.mermaid_metadata_cache.insert(cache_key, metadata.clone());
+        metadata
     }
 
     /// Poll for completed async mermaid renders
@@ -389,7 +597,7 @@ impl MarkdownRenderer {
                             color_image,
                             egui::TextureOptions::LINEAR,
                         );
-                        self.image_cache.insert(cache_key.clone(), texture);
+                        self.cache_image(cache_key.clone(), texture);
                         log::debug!("Async mermaid render completed: {}", cache_key);
                     } else {
                         log::warn!("Failed to decode async mermaid PNG: {}", cache_key);
@@ -437,6 +645,16 @@ impl MarkdownRenderer {
         // Reset state
         self.reset();
 
+        // Capture visible rect for viewport culling
+        // Use clip_rect which represents the visible scrolled area
+        self.visible_rect = Some(ui.clip_rect());
+
+        // Set image max width from config
+        self.image_max_width = config.layout.image_width;
+
+        // Build annotation index once for O(log n) lookups instead of O(n) per paragraph
+        let annotation_index = AnnotationIndex::new(annotations);
+
         let base_font_size = config.theme.fonts.size;
         let spacing = &config.theme.spacing;
 
@@ -455,7 +673,7 @@ impl MarkdownRenderer {
                     self.in_footnote_definition = false;
                 }
                 Event::Start(tag) => self.handle_start_tag(tag, ui, heading_positions),
-                Event::End(tag) => self.handle_end_tag(tag, ui, base_font_size, spacing, config, annotations),
+                Event::End(tag) => self.handle_end_tag(tag, ui, base_font_size, spacing, config, &annotation_index),
                 Event::Text(text) => self.handle_text(text),
                 Event::Code(code) => self.handle_inline_code(code),
                 Event::SoftBreak => self.text_buffer.push(' '),
@@ -579,7 +797,7 @@ impl MarkdownRenderer {
         base_font_size: f32,
         spacing: &crate::config::schema::SpacingConfig,
         config: &Config,
-        annotations: &AnnotationStore,
+        annotation_index: &AnnotationIndex<'_>,
     ) {
         match tag {
             TagEnd::Heading(_level) => {
@@ -594,7 +812,7 @@ impl MarkdownRenderer {
                 } else {
                     // Apply code_text color from config if specified
                     let code_text_color = config.theme.colors.code_text.as_ref().map(|c| parse_config_hex_color(c));
-                    self.render_paragraph(ui, base_font_size, spacing, annotations, code_text_color);
+                    self.render_paragraph(ui, base_font_size, spacing, annotation_index, code_text_color);
                 }
             }
             TagEnd::BlockQuote(_) => {
@@ -704,7 +922,7 @@ impl MarkdownRenderer {
         ui: &mut Ui,
         base_font_size: f32,
         spacing: &crate::config::schema::SpacingConfig,
-        annotations: &AnnotationStore,
+        annotation_index: &AnnotationIndex<'_>,
         code_text_color: Option<Color32>,
     ) {
         let text = std::mem::take(&mut self.text_buffer);
@@ -712,14 +930,16 @@ impl MarkdownRenderer {
             return;
         }
 
+        // Calculate char count once and reuse (avoid multiple O(n) iterations)
         let text_len = text.chars().count();
         let start_offset = self.char_offset;
         let end_offset = start_offset + text_len;
 
-        // Check if any annotations overlap with this text
-        let overlapping = annotations.in_range(start_offset, end_offset);
+        // Check if any annotations overlap with this text (O(log n) binary search)
+        let overlapping = annotation_index.in_range(start_offset, end_offset);
 
         // Parse and render mixed content (text + inline code) with annotations
+        // Annotations are already sorted from the index, no need to re-sort
         self.render_mixed_content_with_annotations(ui, &text, base_font_size, start_offset, &overlapping, code_text_color, self.in_strikethrough);
 
         // Update character offset
@@ -742,26 +962,14 @@ impl MarkdownRenderer {
         code_text_color: Option<Color32>,
         in_strikethrough: bool,
     ) {
-        // Build a simple index for the annotations we have
-        // This avoids O(n) lookup per character by using sorted annotations
-        let end_offset = start_offset + text.chars().count();
+        // Annotations are already sorted by start position from AnnotationIndex
+        // No need to re-sort or re-filter
 
-        // Create a local sorted copy for efficient lookup
-        let mut sorted_anns: Vec<&Annotation> = annotations.iter()
-            .filter(|a| a.overlaps(start_offset, end_offset))
-            .copied()
-            .collect();
-        sorted_anns.sort_by_key(|a| a.start);
-
-        // Split on inline code markers and footnote markers, render appropriately
-        // First split on \x00 (inline code), then handle \x01 (footnotes) within each part
-        let parts: Vec<&str> = text.split('\x00').collect();
-
-        // Find highlight color for a given position using sorted annotations
+        // Find highlight color for a given position using sorted annotations (early exit)
         let get_highlight_color = |char_pos: usize| -> Option<Color32> {
-            for ann in &sorted_anns {
+            for ann in annotations {
                 if ann.start > char_pos {
-                    break; // No more candidates
+                    break; // No more candidates (sorted by start)
                 }
                 if ann.kind == AnnotationKind::Highlight && ann.contains(char_pos) {
                     let color = ann.color.as_deref().unwrap_or("#ffeb3b");
@@ -774,7 +982,7 @@ impl MarkdownRenderer {
 
         // Check if there's a note at this position
         let has_note_at = |char_pos: usize| -> bool {
-            for ann in &sorted_anns {
+            for ann in annotations {
                 if ann.start > char_pos {
                     break;
                 }
@@ -788,7 +996,8 @@ impl MarkdownRenderer {
         ui.horizontal_wrapped(|ui| {
             let mut current_offset = start_offset;
 
-            for part in parts {
+            // Split on inline code markers - use iterator directly (no allocation)
+            for part in text.split('\x00') {
                 if let Some(code) = part.strip_prefix("CODE:") {
                     // Apply code_text color from config if specified, otherwise use default
                     let text_color = code_text_color.unwrap_or(Color32::from_rgb(206, 145, 120));
@@ -803,9 +1012,8 @@ impl MarkdownRenderer {
                     ui.label(code_text);
                     current_offset += code.chars().count();
                 } else if !part.is_empty() {
-                    // Handle footnote references within the text
-                    let fn_parts: Vec<&str> = part.split('\x01').collect();
-                    for fn_part in fn_parts {
+                    // Handle footnote references within the text - use iterator directly
+                    for fn_part in part.split('\x01') {
                         if let Some(fn_ref) = fn_part.strip_prefix("FN:") {
                             // Format is "name:num"
                             if let Some((_name, num_str)) = fn_ref.split_once(':') {
@@ -902,6 +1110,35 @@ impl MarkdownRenderer {
         let padding = config.theme.spacing.code_padding;
         let is_dark = ui.visuals().dark_mode;
 
+        // Copy language label for use (avoids borrow issues)
+        let lang_label = self.code_language.clone();
+
+        // Viewport culling: skip expensive syntax highlighting if not visible
+        // We still render a placeholder frame to maintain layout
+        let cursor_y = ui.cursor().top();
+        let is_visible = self.is_position_visible(cursor_y);
+
+        // Try syntax highlighting with caching - only if visible or already cached
+        #[cfg(feature = "syntax-highlighting")]
+        let highlighted_job = if config.markdown.syntax_highlighting && is_visible {
+            self.get_highlighted_code(&code, lang_label.as_deref(), &config.markdown.syntax_theme)
+        } else if config.markdown.syntax_highlighting {
+            // Check cache without computing - if already cached, use it
+            let cache_key = {
+                use sha2::{Sha256, Digest};
+                let mut hasher = Sha256::new();
+                hasher.update(code.as_bytes());
+                let lang = lang_label.as_deref().unwrap_or("text");
+                format!("{}:{}:{}", &hex::encode(&hasher.finalize()[..8]), lang, &config.markdown.syntax_theme)
+            };
+            self.syntax_cache.get(&cache_key).cloned()
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "syntax-highlighting"))]
+        let _ = is_visible; // Suppress unused warning
+
         egui::Frame::none()
             .fill(theme_colors::code_block_bg(is_dark))
             .inner_margin(padding)
@@ -909,7 +1146,7 @@ impl MarkdownRenderer {
             .rounding(4.0)
             .show(ui, |ui| {
                 // Show language label if present
-                if let Some(lang) = &self.code_language {
+                if let Some(lang) = &lang_label {
                     ui.label(
                         RichText::new(lang)
                             .small()
@@ -918,15 +1155,13 @@ impl MarkdownRenderer {
                     ui.add_space(4.0);
                 }
 
-                // Try syntax highlighting if enabled
+                // Try syntax highlighting if enabled (use cached result)
                 let mut rendered = false;
 
                 #[cfg(feature = "syntax-highlighting")]
-                if config.markdown.syntax_highlighting {
-                    if let Some(job) = highlight_code(&code, self.code_language.as_deref(), &config.markdown.syntax_theme) {
-                        ui.label(job);
-                        rendered = true;
-                    }
+                if let Some(job) = highlighted_job {
+                    ui.label(job);
+                    rendered = true;
                 }
 
                 // Fallback: plain monospace text
@@ -967,7 +1202,7 @@ impl MarkdownRenderer {
 
         // Check failure cache - don't retry renders that already failed
         if self.mermaid_failed.contains(&cache_key) {
-            self.render_mermaid_fallback(ui, code, &diagram_type);
+            self.render_mermaid_fallback(ui, code, diagram_type);
             self.code_block_count += 1;
             ui.add_space(8.0);
             return;
@@ -975,7 +1210,7 @@ impl MarkdownRenderer {
 
         // Check if already rendering asynchronously
         if self.mermaid_pending.contains(&cache_key) {
-            self.render_mermaid_loading(ui, code, &diagram_type);
+            self.render_mermaid_loading(ui, code, diagram_type);
             self.code_block_count += 1;
             ui.add_space(8.0);
             return;
@@ -999,14 +1234,14 @@ impl MarkdownRenderer {
             });
 
             // Show loading state for this frame
-            self.render_mermaid_loading(ui, code, &diagram_type);
+            self.render_mermaid_loading(ui, code, diagram_type);
             self.code_block_count += 1;
             ui.add_space(8.0);
             return;
         }
 
         // Fallback to text preview
-        self.render_mermaid_fallback(ui, code, &diagram_type);
+        self.render_mermaid_fallback(ui, code, diagram_type);
         self.code_block_count += 1;
         ui.add_space(8.0);
     }
@@ -1118,7 +1353,7 @@ impl MarkdownRenderer {
             });
     }
 
-    fn render_mermaid_fallback(&self, ui: &mut Ui, code: &str, diagram_type: &str) {
+    fn render_mermaid_fallback(&mut self, ui: &mut Ui, code: &str, diagram_type: &str) {
         egui::Frame::none()
             .fill(Color32::from_rgb(30, 35, 45))
             .inner_margin(egui::Margin::same(16.0))
@@ -1410,58 +1645,69 @@ impl MarkdownRenderer {
         }
     }
 
-    fn render_mermaid_preview(&self, ui: &mut Ui, code: &str, diagram_type: &str) {
-        // Parse and render a simplified preview based on diagram type
+    fn render_mermaid_preview(&mut self, ui: &mut Ui, code: &str, diagram_type: &str) {
+        // Get cached metadata to avoid re-parsing every frame
+        let internal_type = match diagram_type {
+            "Flowchart" | "Graph" => "flowchart",
+            "Sequence Diagram" => "sequence",
+            "Class Diagram" => "class",
+            "State Diagram" => "state",
+            "Gantt Chart" => "gantt",
+            "Pie Chart" => "pie",
+            "ER Diagram" => "er",
+            "User Journey" => "journey",
+            "Git Graph" => "gitGraph",
+            "Mind Map" => "mindmap",
+            "Timeline" => "timeline",
+            "Quadrant Chart" => "quadrant",
+            "Requirement Diagram" => "requirementDiagram",
+            "C4 Diagram" => "c4",
+            _ => "generic",
+        };
+
+        let metadata = self.get_mermaid_metadata(code, internal_type);
+
+        // Render preview using cached metadata
         match diagram_type {
-            "Flowchart" | "Graph" => self.render_flowchart_preview(ui, code),
-            "Sequence Diagram" => self.render_sequence_preview(ui, code),
-            "Class Diagram" => self.render_class_preview(ui, code),
-            "State Diagram" => self.render_state_preview(ui, code),
-            "Gantt Chart" => self.render_gantt_preview(ui, code),
-            "Pie Chart" => self.render_pie_preview(ui, code),
-            "ER Diagram" => self.render_er_preview(ui, code),
-            "User Journey" => self.render_journey_preview(ui, code),
-            "Git Graph" => self.render_gitgraph_preview(ui, code),
-            "Mind Map" => self.render_mindmap_preview(ui, code),
-            "Timeline" => self.render_timeline_preview(ui, code),
-            "Quadrant Chart" => self.render_quadrant_preview(ui, code),
-            "Requirement Diagram" => self.render_requirement_preview(ui, code),
-            "C4 Diagram" => self.render_c4_preview(ui, code),
-            _ => self.render_generic_preview(ui, code),
+            "Flowchart" | "Graph" => Self::render_flowchart_preview_cached(ui, &metadata),
+            "Sequence Diagram" => Self::render_sequence_preview_cached(ui, &metadata),
+            "Class Diagram" => Self::render_class_preview_cached(ui, &metadata),
+            "State Diagram" => Self::render_state_preview_cached(ui, &metadata),
+            "Gantt Chart" => Self::render_gantt_preview_cached(ui, &metadata),
+            "Pie Chart" => Self::render_pie_preview_cached(ui, &metadata),
+            "ER Diagram" => Self::render_er_preview_cached(ui, &metadata),
+            "User Journey" => Self::render_journey_preview_cached(ui, &metadata),
+            "Git Graph" => Self::render_gitgraph_preview_cached(ui, &metadata),
+            "Mind Map" => Self::render_mindmap_preview_cached(ui, &metadata),
+            "Timeline" => Self::render_timeline_preview_cached(ui, &metadata),
+            "Quadrant Chart" => Self::render_quadrant_preview_cached(ui),
+            "Requirement Diagram" => Self::render_requirement_preview_cached(ui, &metadata),
+            "C4 Diagram" => Self::render_c4_preview_cached(ui),
+            _ => Self::render_generic_preview_cached(ui, &metadata),
         }
     }
 
-    fn render_flowchart_preview(&self, ui: &mut Ui, code: &str) {
-        // Extract nodes and display them
-        let nodes: Vec<&str> = code.lines()
-            .filter(|l| !l.trim().starts_with("graph") && !l.trim().starts_with("flowchart"))
-            .filter(|l| l.contains('[') || l.contains('(') || l.contains('{'))
-            .take(6)
-            .collect();
-
-        if nodes.is_empty() {
-            self.render_generic_preview(ui, code);
+    fn render_flowchart_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
+        if metadata.nodes.is_empty() {
+            Self::render_generic_preview_cached(ui, metadata);
             return;
         }
 
         ui.horizontal_wrapped(|ui| {
-            for (i, node) in nodes.iter().enumerate() {
-                // Extract node text
-                let text = extract_node_text(node);
-
+            for (i, text) in metadata.nodes.iter().enumerate() {
                 egui::Frame::none()
                     .fill(Color32::from_rgb(70, 130, 180))
                     .inner_margin(egui::Margin::symmetric(12.0, 6.0))
                     .rounding(4.0)
                     .show(ui, |ui| {
                         ui.label(
-                            RichText::new(&text)
+                            RichText::new(text)
                                 .color(Color32::WHITE)
                                 .size(12.0)
                         );
                     });
 
-                if i < nodes.len() - 1 {
+                if i < metadata.nodes.len() - 1 {
                     ui.label(
                         RichText::new(" → ")
                             .color(Color32::from_gray(120))
@@ -1470,7 +1716,7 @@ impl MarkdownRenderer {
             }
         });
 
-        if nodes.len() >= 6 {
+        if metadata.nodes.len() >= 6 {
             ui.label(
                 RichText::new("...")
                     .color(Color32::from_gray(100))
@@ -1479,183 +1725,129 @@ impl MarkdownRenderer {
         }
     }
 
-    fn render_sequence_preview(&self, ui: &mut Ui, code: &str) {
-        // Extract participants and messages
-        let mut participants: Vec<&str> = Vec::new();
-        let mut messages: Vec<&str> = Vec::new();
+    fn render_sequence_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
+        let participant_count = metadata.count1;
+        let arrow_count = metadata.count2;
 
-        for line in code.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("participant") {
-                if let Some(name) = trimmed.strip_prefix("participant").map(|s| s.trim()) {
-                    participants.push(name);
+        if participant_count == 0 && arrow_count == 0 {
+            Self::render_generic_preview_cached(ui, metadata);
+            return;
+        }
+
+        ui.horizontal_wrapped(|ui| {
+            // Show participant boxes
+            for i in 0..participant_count.min(4) {
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(100, 140, 180))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                    .rounding(2.0)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!("P{}", i + 1))
+                                .color(Color32::WHITE)
+                                .size(11.0)
+                        );
+                    });
+
+                if i < participant_count.min(4) - 1 {
+                    ui.label(RichText::new(" ").color(Color32::TRANSPARENT));
                 }
-            } else if trimmed.contains("->>") || trimmed.contains("-->>") {
-                messages.push(trimmed);
             }
-        }
-
-        // Show participants
-        if !participants.is_empty() {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Participants: ").color(Color32::from_gray(140)).small());
-                for (i, p) in participants.iter().take(4).enumerate() {
-                    if i > 0 {
-                        ui.label(RichText::new(", ").color(Color32::from_gray(100)));
-                    }
-                    ui.label(RichText::new(*p).color(Color32::from_rgb(130, 180, 230)));
-                }
-            });
-        }
-
-        // Show message count
-        if !messages.is_empty() {
-            ui.label(
-                RichText::new(format!("📨 {} messages", messages.len()))
-                    .color(Color32::from_gray(140))
-                    .small()
-            );
-        }
-
-        if participants.is_empty() && messages.is_empty() {
-            self.render_generic_preview(ui, code);
-        }
-    }
-
-    fn render_class_preview(&self, ui: &mut Ui, code: &str) {
-        let class_count = code.lines()
-            .filter(|l| l.trim().starts_with("class "))
-            .count();
+        });
 
         ui.label(
-            RichText::new(format!("📦 {} classes defined", class_count.max(1)))
-                .color(Color32::from_rgb(180, 140, 200))
-        );
-    }
-
-    fn render_state_preview(&self, ui: &mut Ui, code: &str) {
-        let state_count = code.lines()
-            .filter(|l| {
-                let t = l.trim();
-                t.starts_with("state ") || t.contains(" --> ")
-            })
-            .count();
-
-        ui.label(
-            RichText::new(format!("🔄 State machine with ~{} transitions", state_count.max(1)))
-                .color(Color32::from_rgb(140, 200, 180))
-        );
-    }
-
-    fn render_gantt_preview(&self, ui: &mut Ui, code: &str) {
-        let task_count = code.lines()
-            .filter(|l| l.contains(':'))
-            .count();
-
-        ui.label(
-            RichText::new(format!("📅 Gantt chart with {} tasks", task_count.max(1)))
-                .color(Color32::from_rgb(200, 180, 140))
-        );
-    }
-
-    fn render_pie_preview(&self, ui: &mut Ui, code: &str) {
-        let slice_count = code.lines()
-            .filter(|l| l.trim().starts_with('"'))
-            .count();
-
-        ui.label(
-            RichText::new(format!("🥧 Pie chart with {} slices", slice_count.max(1)))
-                .color(Color32::from_rgb(200, 160, 180))
-        );
-    }
-
-    fn render_er_preview(&self, ui: &mut Ui, code: &str) {
-        let entity_count = code.lines()
-            .filter(|l| l.contains('{') || l.contains("||"))
-            .count();
-
-        ui.label(
-            RichText::new(format!("🗃️ ER diagram with {} entities/relations", entity_count.max(1)))
-                .color(Color32::from_rgb(160, 190, 200))
-        );
-    }
-
-    fn render_journey_preview(&self, ui: &mut Ui, code: &str) {
-        let section_count = code.lines()
-            .filter(|l| l.trim().starts_with("section"))
-            .count();
-
-        ui.label(
-            RichText::new(format!("🚶 User journey with {} sections", section_count.max(1)))
+            RichText::new(format!("📨 {} messages between {} participants", arrow_count.max(1), participant_count.max(1)))
                 .color(Color32::from_rgb(140, 180, 220))
         );
     }
 
-    fn render_gitgraph_preview(&self, ui: &mut Ui, code: &str) {
-        let commit_count = code.lines()
-            .filter(|l| l.trim().starts_with("commit"))
-            .count();
-        let branch_count = code.lines()
-            .filter(|l| l.trim().starts_with("branch"))
-            .count();
-
+    fn render_class_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("🌿 Git graph: {} commits, {} branches", commit_count.max(1), branch_count))
+            RichText::new(format!("📦 {} classes defined", metadata.count1.max(1)))
+                .color(Color32::from_rgb(180, 140, 200))
+        );
+    }
+
+    fn render_state_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
+        ui.label(
+            RichText::new(format!("🔄 State machine with ~{} transitions", metadata.count1.max(1)))
+                .color(Color32::from_rgb(140, 200, 180))
+        );
+    }
+
+    fn render_gantt_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
+        ui.label(
+            RichText::new(format!("📅 Gantt chart with {} tasks", metadata.count1.max(1)))
+                .color(Color32::from_rgb(200, 180, 140))
+        );
+    }
+
+    fn render_pie_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
+        ui.label(
+            RichText::new(format!("🥧 Pie chart with {} slices", metadata.count1.max(1)))
+                .color(Color32::from_rgb(200, 160, 180))
+        );
+    }
+
+    fn render_er_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
+        ui.label(
+            RichText::new(format!("🗃️ ER diagram with {} entities/relations", metadata.count1.max(1)))
+                .color(Color32::from_rgb(160, 190, 200))
+        );
+    }
+
+    fn render_journey_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
+        ui.label(
+            RichText::new(format!("🚶 User journey with {} sections", metadata.count1.max(1)))
+                .color(Color32::from_rgb(140, 180, 220))
+        );
+    }
+
+    fn render_gitgraph_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
+        ui.label(
+            RichText::new(format!("🌿 Git graph: {} commits, {} branches", metadata.count1.max(1), metadata.count2))
                 .color(Color32::from_rgb(180, 200, 140))
         );
     }
 
-    fn render_mindmap_preview(&self, ui: &mut Ui, code: &str) {
-        let node_count = code.lines()
-            .filter(|l| !l.trim().is_empty() && !l.trim().starts_with("mindmap"))
-            .count();
-
+    fn render_mindmap_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("🧠 Mind map with {} nodes", node_count.max(1)))
+            RichText::new(format!("🧠 Mind map with {} nodes", metadata.count1.max(1)))
                 .color(Color32::from_rgb(200, 160, 200))
         );
     }
 
-    fn render_timeline_preview(&self, ui: &mut Ui, code: &str) {
-        let event_count = code.lines()
-            .filter(|l| l.contains(':'))
-            .count();
-
+    fn render_timeline_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("📅 Timeline with {} events", event_count.max(1)))
+            RichText::new(format!("📅 Timeline with {} events", metadata.count1.max(1)))
                 .color(Color32::from_rgb(160, 200, 180))
         );
     }
 
-    fn render_quadrant_preview(&self, ui: &mut Ui, _code: &str) {
+    fn render_quadrant_preview_cached(ui: &mut Ui) {
         ui.label(
             RichText::new("📊 Quadrant chart")
                 .color(Color32::from_rgb(180, 180, 200))
         );
     }
 
-    fn render_requirement_preview(&self, ui: &mut Ui, code: &str) {
-        let req_count = code.lines()
-            .filter(|l| l.trim().starts_with("requirement"))
-            .count();
-
+    fn render_requirement_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("📋 Requirements diagram with {} items", req_count.max(1)))
+            RichText::new(format!("📋 Requirements diagram with {} items", metadata.count1.max(1)))
                 .color(Color32::from_rgb(200, 180, 160))
         );
     }
 
-    fn render_c4_preview(&self, ui: &mut Ui, _code: &str) {
+    fn render_c4_preview_cached(ui: &mut Ui) {
         ui.label(
             RichText::new("🏗️ C4 Architecture diagram")
                 .color(Color32::from_rgb(160, 180, 200))
         );
     }
 
-    fn render_generic_preview(&self, ui: &mut Ui, code: &str) {
-        let line_count = code.lines().count();
+    fn render_generic_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("📊 Diagram ({} lines)", line_count))
+            RichText::new(format!("📊 Diagram ({} lines)", metadata.count1))
                 .color(Color32::from_gray(160))
                 .italics()
         );
@@ -1815,11 +2007,16 @@ impl MarkdownRenderer {
     }
 
     fn render_image(&mut self, ui: &mut Ui, url: &str, title: &str) {
+        // Viewport culling: skip loading new images if not visible
+        // Already-cached images are cheap to render, so we still show those
+        let cursor_y = ui.cursor().top();
+        let is_visible = self.is_position_visible(cursor_y);
+
         // Check if we have this image cached
         if let Some(texture) = self.image_cache.get(url) {
             let size = texture.size_vec2();
             // Scale to fit width if needed
-            let max_width = ui.available_width().min(600.0);
+            let max_width = ui.available_width().min(self.image_max_width.unwrap_or(600.0));
             let scale = if size.x > max_width {
                 max_width / size.x
             } else {
@@ -1841,63 +2038,66 @@ impl MarkdownRenderer {
         // Check if it's a remote URL
         let is_remote = url.starts_with("http://") || url.starts_with("https://");
 
-        if is_remote {
-            // Try to fetch and load remote image
-            if let Some(image_data) = self.fetch_remote_image(url) {
-                if let Ok(texture) = load_image_from_memory(ui.ctx(), &image_data, url) {
-                    let size = texture.size_vec2();
-                    let max_width = ui.available_width().min(600.0);
-                    let scale = if size.x > max_width {
-                        max_width / size.x
-                    } else {
-                        1.0
-                    };
-                    let display_size = Vec2::new(size.x * scale, size.y * scale);
-                    ui.image((texture.id(), display_size));
-                    if !title.is_empty() {
-                        ui.label(
-                            RichText::new(title)
-                                .italics()
-                                .small()
-                                .color(Color32::from_gray(150)),
-                        );
+        // Viewport culling: only load images if visible (or they'll be cached for when user scrolls)
+        if is_visible {
+            if is_remote {
+                // Try to fetch and load remote image
+                if let Some(image_data) = self.fetch_remote_image(url) {
+                    if let Ok(texture) = load_image_from_memory(ui.ctx(), &image_data, url) {
+                        let size = texture.size_vec2();
+                        let max_width = ui.available_width().min(self.image_max_width.unwrap_or(600.0));
+                        let scale = if size.x > max_width {
+                            max_width / size.x
+                        } else {
+                            1.0
+                        };
+                        let display_size = Vec2::new(size.x * scale, size.y * scale);
+                        ui.image((texture.id(), display_size));
+                        if !title.is_empty() {
+                            ui.label(
+                                RichText::new(title)
+                                    .italics()
+                                    .small()
+                                    .color(Color32::from_gray(150)),
+                            );
+                        }
+                        // Cache for future frames
+                        self.cache_image(url.to_string(), texture);
+                        return;
                     }
-                    // Cache for future frames
-                    self.image_cache.insert(url.to_string(), texture);
-                    return;
                 }
-            }
-        } else {
-            // Try to load from local path
-            let image_path = self.resolve_image_path(url);
+            } else {
+                // Try to load from local path
+                let image_path = self.resolve_image_path(url);
 
-            if let Some(path) = image_path {
-                if let Ok(texture) = load_image_texture(ui.ctx(), &path, url) {
-                    let size = texture.size_vec2();
-                    let max_width = ui.available_width().min(600.0);
-                    let scale = if size.x > max_width {
-                        max_width / size.x
-                    } else {
-                        1.0
-                    };
-                    let display_size = Vec2::new(size.x * scale, size.y * scale);
-                    ui.image((texture.id(), display_size));
-                    if !title.is_empty() {
-                        ui.label(
-                            RichText::new(title)
-                                .italics()
-                                .small()
-                                .color(Color32::from_gray(150)),
-                        );
+                if let Some(path) = image_path {
+                    if let Ok(texture) = load_image_texture(ui.ctx(), &path, url) {
+                        let size = texture.size_vec2();
+                        let max_width = ui.available_width().min(self.image_max_width.unwrap_or(600.0));
+                        let scale = if size.x > max_width {
+                            max_width / size.x
+                        } else {
+                            1.0
+                        };
+                        let display_size = Vec2::new(size.x * scale, size.y * scale);
+                        ui.image((texture.id(), display_size));
+                        if !title.is_empty() {
+                            ui.label(
+                                RichText::new(title)
+                                    .italics()
+                                    .small()
+                                    .color(Color32::from_gray(150)),
+                            );
+                        }
+                        // Cache for future frames
+                        self.cache_image(url.to_string(), texture);
+                        return;
                     }
-                    // Cache for future frames
-                    self.image_cache.insert(url.to_string(), texture);
-                    return;
                 }
             }
         }
 
-        // Fallback: show placeholder for failed loads
+        // Fallback: show placeholder (for failed loads or not-yet-visible images)
         ui.horizontal(|ui| {
             ui.label(RichText::new("🖼").size(20.0));
             let display_text = if !title.is_empty() {
@@ -2042,10 +2242,10 @@ fn highlight_code(code: &str, language: Option<&str>, theme_name: &str) -> Optio
         .and_then(|lang| ss.find_syntax_by_token(lang))
         .unwrap_or_else(|| ss.find_syntax_plain_text());
 
-    // Use theme from config, falling back to base16-ocean.dark if not found
+    // Use theme from config, falling back to base16-ocean.dark or any available theme
     let theme = ts.themes.get(theme_name)
         .or_else(|| ts.themes.get("base16-ocean.dark"))
-        .unwrap_or_else(|| ts.themes.values().next().unwrap());
+        .or_else(|| ts.themes.values().next())?;
     let mut highlighter = HighlightLines::new(syntax, theme);
 
     let mut job = egui::text::LayoutJob::default();
