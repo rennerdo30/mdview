@@ -3,10 +3,10 @@
   "sessionId": "f83e0d9c-3bf3-4f86-80f6-78c361442a2c",
   "status": "running",
   "startedAt": "2026-02-03T07:13:30.031Z",
-  "updatedAt": "2026-02-03T07:59:54.093Z",
-  "currentIteration": 7,
+  "updatedAt": "2026-02-03T08:03:50.561Z",
+  "currentIteration": 8,
   "maxIterations": 10,
-  "tasksCompleted": 7,
+  "tasksCompleted": 8,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -53,8 +53,8 @@
       {
         "id": "US-007",
         "title": "Add animated TOC panel open/close",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-008",
@@ -140,6 +140,16 @@
       "durationMs": 253184,
       "startedAt": "2026-02-03T07:51:34.502Z",
       "endedAt": "2026-02-03T07:55:47.686Z"
+    },
+    {
+      "iteration": 8,
+      "status": "completed",
+      "taskId": "US-007",
+      "taskTitle": "Add animated TOC panel open/close",
+      "taskCompleted": true,
+      "durationMs": 245355,
+      "startedAt": "2026-02-03T07:55:48.734Z",
+      "endedAt": "2026-02-03T07:59:54.089Z"
     }
   ],
   "skippedTaskIds": [],
