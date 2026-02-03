@@ -1483,7 +1483,16 @@ impl MdViewApp {
     }
 
     fn render_toc_sidebar(&mut self, ctx: &egui::Context) {
-        if !self.state.toc_visible() {
+        // Update animation and request repaint if still animating
+        let animating = self.state.update_toc_animation();
+        if animating {
+            ctx.request_repaint();
+        }
+
+        let progress = self.state.toc_animation_eased();
+
+        // Don't render panel at all when fully closed
+        if progress < 0.001 {
             return;
         }
 
@@ -1492,15 +1501,33 @@ impl MdViewApp {
         let border_color = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
         let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
 
-        egui::SidePanel::left("toc_panel")
-            .resizable(true)
-            .default_width(self.state.toc_width)
-            .width_range(180.0..=400.0)
+        // Animate width: from 0 to full toc_width
+        let target_width = self.state.toc_width;
+        let animated_width = target_width * progress;
+
+        // During animation, use exact width (not resizable); when fully open, allow resizing
+        let fully_open = progress > 0.999;
+
+        let mut panel = egui::SidePanel::left("toc_panel")
+            .resizable(fully_open)
+            .default_width(animated_width);
+
+        if fully_open {
+            panel = panel.width_range(180.0..=400.0);
+        } else {
+            // Lock to animated width during transition
+            panel = panel.width_range(animated_width..=animated_width);
+        }
+
+        panel
             .frame(egui::Frame::none()
                 .fill(panel_bg)
                 .inner_margin(egui::Margin::same(0.0))
                 .stroke(Stroke::new(1.0, border_color)))
             .show(ctx, |ui| {
+                // Clip contents during animation to prevent overflow
+                ui.set_clip_rect(ui.available_rect_before_wrap());
+
                 // Header
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
@@ -1514,13 +1541,20 @@ impl MdViewApp {
                 });
                 ui.add_space(8.0);
 
-                // TOC entries
-                if let Some(scroll_to) =
+                // TOC entries (only interactive when fully open)
+                if fully_open {
+                    if let Some(scroll_to) =
+                        self.toc_panel
+                            .render(ui, &self.state.toc, self.state.current_heading_idx, is_dark)
+                    {
+                        // Set the target heading to scroll to
+                        self.state.scroll_to_heading = Some(scroll_to);
+                    }
+                } else {
+                    // During animation, render entries non-interactively for visual continuity
+                    ui.disable();
                     self.toc_panel
-                        .render(ui, &self.state.toc, self.state.current_heading_idx, is_dark)
-                {
-                    // Set the target heading to scroll to
-                    self.state.scroll_to_heading = Some(scroll_to);
+                        .render(ui, &self.state.toc, self.state.current_heading_idx, is_dark);
                 }
             });
     }

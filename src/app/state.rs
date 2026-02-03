@@ -172,11 +172,18 @@ pub struct AppState {
 
     /// Cached config hash for efficient cache validation (avoids recomputing every frame)
     cached_config_hash: u64,
+
+    /// TOC panel animation progress (0.0 = fully closed, 1.0 = fully open)
+    pub toc_animation_progress: f32,
+
+    /// Last frame time for animation delta calculation
+    toc_animation_last_time: Option<std::time::Instant>,
 }
 
 impl AppState {
     pub fn new(config: Config) -> Self {
         let toc_width = config.general.toc_width as f32;
+        let toc_initially_visible = config.general.show_toc;
         let recent_files = load_recent_files();
         let config_hash = compute_markdown_config_hash(&config);
 
@@ -249,6 +256,8 @@ impl AppState {
             is_loading: false,
             cached_recent_files: None,
             cached_config_hash: config_hash,
+            toc_animation_progress: if toc_initially_visible { 1.0 } else { 0.0 },
+            toc_animation_last_time: None,
         }
     }
 
@@ -262,9 +271,53 @@ impl AppState {
         self.config.general.show_toc = visible;
     }
 
-    /// Toggle TOC visibility
+    /// Toggle TOC visibility (starts animation)
     pub fn toggle_toc(&mut self) {
         self.config.general.show_toc = !self.config.general.show_toc;
+        // Reset animation timer so first frame gets a proper delta
+        self.toc_animation_last_time = None;
+    }
+
+    /// Update TOC animation progress. Returns true if animation is still in progress.
+    pub fn update_toc_animation(&mut self) -> bool {
+        let target = if self.config.general.show_toc { 1.0 } else { 0.0 };
+
+        // Already at target
+        if (self.toc_animation_progress - target).abs() < 0.001 {
+            self.toc_animation_progress = target;
+            self.toc_animation_last_time = None;
+            return false;
+        }
+
+        let now = std::time::Instant::now();
+        let dt = self
+            .toc_animation_last_time
+            .map(|last| now.duration_since(last).as_secs_f32())
+            .unwrap_or(0.016); // ~60fps default for first frame
+        self.toc_animation_last_time = Some(now);
+
+        // Animation duration: 200ms
+        let speed = 1.0 / 0.2;
+        if target > self.toc_animation_progress {
+            self.toc_animation_progress = (self.toc_animation_progress + speed * dt).min(1.0);
+        } else {
+            self.toc_animation_progress = (self.toc_animation_progress - speed * dt).max(0.0);
+        }
+
+        true
+    }
+
+    /// Get the eased animation progress using ease-out cubic
+    pub fn toc_animation_eased(&self) -> f32 {
+        let t = self.toc_animation_progress;
+        // Ease-out cubic: 1 - (1 - t)^3
+        1.0 - (1.0 - t).powi(3)
+    }
+
+    /// Whether the TOC panel is animating (not at rest)
+    pub fn toc_is_animating(&self) -> bool {
+        let target = if self.config.general.show_toc { 1.0 } else { 0.0 };
+        (self.toc_animation_progress - target).abs() > 0.001
     }
 
     /// Get current theme name (from config)
