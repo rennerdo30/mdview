@@ -14,6 +14,18 @@ pub enum PendingAnnotationAction {
     AddNote { start: usize, end: usize, text: String },
 }
 
+/// A menu item registered by a plugin
+#[cfg(feature = "plugins")]
+#[derive(Debug, Clone)]
+pub struct PluginMenuItem {
+    /// Unique identifier for this menu item
+    pub id: String,
+    /// Display label for the menu
+    pub label: String,
+    /// Name of the Lua callback function to invoke
+    pub callback: String,
+}
+
 /// Snapshot of config values accessible to plugins
 #[cfg(feature = "plugins")]
 #[derive(Default, Clone)]
@@ -38,6 +50,10 @@ pub struct PluginState {
     pub pending_config_changes: Vec<(String, String)>,
     /// Current config snapshot (read-only for plugins, updated by app)
     pub config_snapshot: ConfigSnapshot,
+    /// Registered plugin menu items
+    pub menu_items: Vec<PluginMenuItem>,
+    /// Pending menu item clicks (callback names to invoke)
+    pub pending_menu_clicks: Vec<String>,
 }
 
 #[cfg(feature = "plugins")]
@@ -165,6 +181,42 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
         }
     })?;
     mdview.set("set_setting", set_setting)?;
+
+    // register_menu_item(id, label, callback) - add a custom menu item to the Plugins menu
+    // callback is the name of a global Lua function to call when clicked
+    let state_clone = Arc::clone(&plugin_state);
+    let register_menu_item = lua.create_function(move |_, (id, label, callback): (String, String, String)| {
+        match state_clone.lock() {
+            Ok(mut state) => {
+                // Check for duplicate ID
+                if state.menu_items.iter().any(|item| item.id == id) {
+                    return Err(mlua::Error::RuntimeError(format!("Menu item with id '{}' already exists", id)));
+                }
+                log::info!("[plugin] Registered menu item: {}", label);
+                state.menu_items.push(PluginMenuItem { id, label, callback });
+                Ok(())
+            }
+            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+        }
+    })?;
+    mdview.set("register_menu_item", register_menu_item)?;
+
+    // unregister_menu_item(id) - remove a custom menu item
+    let state_clone = Arc::clone(&plugin_state);
+    let unregister_menu_item = lua.create_function(move |_, id: String| {
+        match state_clone.lock() {
+            Ok(mut state) => {
+                let before = state.menu_items.len();
+                state.menu_items.retain(|item| item.id != id);
+                if state.menu_items.len() < before {
+                    log::info!("[plugin] Unregistered menu item: {}", id);
+                }
+                Ok(())
+            }
+            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+        }
+    })?;
+    mdview.set("unregister_menu_item", unregister_menu_item)?;
 
     // Register to globals
     globals.set("mdview", mdview)?;

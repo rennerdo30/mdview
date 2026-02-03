@@ -64,16 +64,14 @@ impl TocTree {
     }
 }
 
-/// Build a TOC tree from markdown content
-pub fn build_toc(content: &str) -> TocTree {
+/// Build a TOC tree from pre-parsed markdown events (more efficient - avoids re-parsing)
+pub fn build_toc_from_events<'a>(events: impl IntoIterator<Item = &'a Event<'a>>) -> TocTree {
     let mut flat_entries = Vec::new();
-    let parser_events: Vec<_> = parser::parse(content).collect();
-
     let mut current_text = String::new();
     let mut current_level = 0;
     let mut in_heading = false;
 
-    for event in &parser_events {
+    for event in events {
         match event {
             Event::Start(Tag::Heading { level, .. }) => {
                 in_heading = true;
@@ -105,6 +103,12 @@ pub fn build_toc(content: &str) -> TocTree {
         entries: tree_entries,
         flat: flat_entries,
     }
+}
+
+/// Build a TOC tree from markdown content (convenience function, less efficient)
+pub fn build_toc(content: &str) -> TocTree {
+    let parser_events: Vec<_> = parser::parse(content).collect();
+    build_toc_from_events(&parser_events)
 }
 
 /// Build a nested tree from flat entries

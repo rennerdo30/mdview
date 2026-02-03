@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "sessionId": "f83e0d9c-3bf3-4f86-80f6-78c361442a2c",
+  "status": "running",
+  "startedAt": "2026-02-03T07:13:30.031Z",
+  "updatedAt": "2026-02-03T07:20:28.432Z",
+  "currentIteration": 0,
+  "maxIterations": 10,
+  "tasksCompleted": 0,
+  "isPaused": false,
+  "agentPlugin": "claude",
+  "trackerState": {
+    "plugin": "json",
+    "prdPath": "./tasks/prd.json",
+    "totalTasks": 9,
+    "tasks": [
+      {
+        "id": "US-001",
+        "title": "Profile and optimize initial markdown rendering",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-002",
+        "title": "Optimize scrolling performance for large documents",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-003",
+        "title": "Implement viewport-aware rendering",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-004",
+        "title": "Add search/filter to the TOC panel",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-005",
+        "title": "Improve typography hierarchy and readability",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-006",
+        "title": "Add smooth scrolling for TOC navigation",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-007",
+        "title": "Add animated TOC panel open/close",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-008",
+        "title": "Add fade transitions when switching files",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-009",
+        "title": "Improve syntax highlighting in code blocks",
+        "status": "open",
+        "completedInSession": false
+      }
+    ]
+  },
+  "iterations": [],
+  "skippedTaskIds": [],
+  "cwd": "/Users/rennerdo30/Development/mdview",
+  "activeTaskIds": [],
+  "subagentPanelVisible": true
+}

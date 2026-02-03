@@ -122,9 +122,7 @@ fn register_macos() -> AssociationResult {
                     "com.apple.LaunchServices/com.apple.launchservices.secure",
                     "LSHandlers",
                     "-array-add",
-                    &format!(
-                        "{{LSHandlerContentType = \"net.daringfireball.markdown\"; LSHandlerRoleAll = \"com.mdview.mdview\";}}"
-                    ),
+                    "{LSHandlerContentType = \"net.daringfireball.markdown\"; LSHandlerRoleAll = \"com.mdview.mdview\";}",
                 ])
                 .output();
 

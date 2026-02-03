@@ -43,9 +43,10 @@ impl CachedMarkdown {
         }
     }
 
-    /// Check if cache is valid for given content and config
-    pub fn is_valid(&self, content_hash: &str, config: &Config) -> bool {
-        self.content_hash == content_hash && self.config_hash == compute_markdown_config_hash(config)
+    /// Check if cache is valid for given content and config hash
+    /// Takes pre-computed config hash to avoid recomputing every frame
+    pub fn is_valid(&self, content_hash: &str, config_hash: u64) -> bool {
+        self.content_hash == content_hash && self.config_hash == config_hash
     }
 }
 
@@ -164,12 +165,20 @@ pub struct AppState {
 
     /// Whether a file operation is in progress (for loading indicator)
     pub is_loading: bool,
+
+    /// Cached recent files for menu/welcome screen (avoids per-frame allocation)
+    /// Contains (path, display_name, parent_dir) tuples
+    cached_recent_files: Option<Vec<(PathBuf, String, String)>>,
+
+    /// Cached config hash for efficient cache validation (avoids recomputing every frame)
+    cached_config_hash: u64,
 }
 
 impl AppState {
     pub fn new(config: Config) -> Self {
         let toc_width = config.general.toc_width as f32;
         let recent_files = load_recent_files();
+        let config_hash = compute_markdown_config_hash(&config);
 
         // Initialize plugin runtime if feature is enabled
         #[cfg(feature = "plugins")]
@@ -238,6 +247,8 @@ impl AppState {
             folder_state: FolderState::new(),
             file_deleted: false,
             is_loading: false,
+            cached_recent_files: None,
+            cached_config_hash: config_hash,
         }
     }
 
@@ -263,9 +274,9 @@ impl AppState {
 
     /// Get or create cached markdown events
     pub fn get_cached_events(&mut self) -> Arc<Vec<Event<'static>>> {
-        // Check if cache is valid
+        // Check if cache is valid (uses cached config hash to avoid recomputing)
         if let Some(ref cached) = self.cached_markdown {
-            if cached.is_valid(&self.content_hash, &self.config) {
+            if cached.is_valid(&self.content_hash, self.cached_config_hash) {
                 return Arc::clone(&cached.events);
             }
         }
@@ -280,6 +291,11 @@ impl AppState {
     /// Invalidate the markdown cache (call when content or config changes)
     pub fn invalidate_markdown_cache(&mut self) {
         self.cached_markdown = None;
+    }
+
+    /// Update the cached config hash (call when markdown config options change)
+    pub fn update_config_hash(&mut self) {
+        self.cached_config_hash = compute_markdown_config_hash(&self.config);
     }
 
     /// Set a status message that will be displayed temporarily
@@ -323,8 +339,9 @@ impl AppState {
             }
         };
 
-        // Add to recent files
+        // Add to recent files and invalidate cache
         self.recent_files.add(&path);
+        self.cached_recent_files = None;
         if let Err(e) = save_recent_files(&self.recent_files) {
             log::warn!("Failed to save recent files: {}", e);
         }
@@ -590,5 +607,28 @@ impl AppState {
         if let Some(ref runtime) = self.plugin_runtime {
             runtime.update_config_snapshot(&self.config);
         }
+    }
+
+    /// Get cached recent files list for menu and welcome screen
+    /// This avoids rebuilding the Vec twice per frame with String allocations
+    pub fn get_cached_recent_files(&mut self) -> &[(PathBuf, String, String)] {
+        if self.cached_recent_files.is_none() {
+            let files: Vec<_> = self.recent_files
+                .get_existing()
+                .iter()
+                .map(|f| (
+                    f.path.clone(),
+                    f.display_name().to_string(),
+                    f.path.parent().and_then(|p| p.to_str()).unwrap_or("").to_string(),
+                ))
+                .collect();
+            self.cached_recent_files = Some(files);
+        }
+        self.cached_recent_files.as_ref().unwrap()
+    }
+
+    /// Invalidate the cached recent files (call after adding/removing files)
+    pub fn invalidate_recent_files_cache(&mut self) {
+        self.cached_recent_files = None;
     }
 }

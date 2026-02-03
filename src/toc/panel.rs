@@ -4,6 +4,8 @@
 
 #![allow(dead_code)]
 
+use std::borrow::Cow;
+
 use egui::{Color32, Rounding, Ui, Vec2};
 
 use super::{TocEntry, TocTree};
@@ -56,6 +58,12 @@ pub struct TocPanel {
 
     /// Whether the TOC panel has keyboard focus
     has_focus: bool,
+
+    /// Cached visible indices (invalidated when collapsed changes)
+    cached_visible_indices: Option<Vec<usize>>,
+
+    /// Hash of collapsed state when cache was built
+    collapsed_generation: u64,
 }
 
 impl TocPanel {
@@ -64,6 +72,8 @@ impl TocPanel {
             collapsed: Vec::new(),
             focused_index: None,
             has_focus: false,
+            cached_visible_indices: None,
+            collapsed_generation: 0,
         }
     }
 
@@ -78,6 +88,7 @@ impl TocPanel {
         // Ensure collapsed vector is sized correctly
         if self.collapsed.len() != toc.len() {
             self.collapsed.resize(toc.len(), false);
+            self.cached_visible_indices = None; // Invalidate cache when TOC changes
         }
 
         // Pre-compute colors once per render (not per entry)
@@ -144,10 +155,34 @@ impl TocPanel {
     }
 
     /// Get a flat list of visible (not collapsed) entry indices
-    fn get_visible_indices(&self, toc: &TocTree) -> Vec<usize> {
+    /// Uses caching to avoid O(n) tree traversal every frame
+    /// Returns a clone of the cached Vec (much cheaper than tree traversal)
+    fn get_visible_indices(&mut self, toc: &TocTree) -> Vec<usize> {
+        // Compute a simple hash of collapsed state
+        let current_gen = self.compute_collapsed_hash();
+
+        // Check if cache is valid
+        if let Some(ref cached) = self.cached_visible_indices {
+            if self.collapsed_generation == current_gen {
+                return cached.clone();
+            }
+        }
+
+        // Rebuild cache - tree traversal only happens when collapsed state changes
         let mut indices = Vec::new();
         self.collect_visible_indices(&toc.entries, &mut indices);
+        self.cached_visible_indices = Some(indices.clone());
+        self.collapsed_generation = current_gen;
         indices
+    }
+
+    /// Compute a simple hash of the collapsed state for cache invalidation
+    fn compute_collapsed_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        self.collapsed.hash(&mut hasher);
+        hasher.finish()
     }
 
     fn collect_visible_indices(&self, entries: &[TocEntry], indices: &mut Vec<usize>) {
@@ -232,6 +267,8 @@ impl TocPanel {
         let is_current = current_heading == Some(entry.index);
         let is_focused = focused_index == Some(entry.index);
         let has_children = !entry.children.is_empty();
+        // Look up collapsed state once (avoid 3 lookups per entry)
+        let mut collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
 
         // Calculate item height
         let item_height = 28.0;
@@ -283,9 +320,8 @@ impl TocPanel {
             );
         }
 
-        // Collapse toggle for entries with children
+        // Collapse toggle for entries with children (uses cached collapsed value)
         if has_children {
-            let collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
             let toggle_text = if collapsed { "\u{25B6}" } else { "\u{25BC}" };
 
             let toggle_pos = rect.min + Vec2::new(indent - 14.0, item_height / 2.0);
@@ -302,8 +338,9 @@ impl TocPanel {
             );
 
             if toggle_response.clicked() {
+                collapsed = !collapsed;
                 if let Some(c) = self.collapsed.get_mut(entry.index) {
-                    *c = !*c;
+                    *c = collapsed;
                 }
             }
         }
@@ -345,8 +382,7 @@ impl TocPanel {
             response.on_hover_text(&entry.text);
         }
 
-        // Render children if not collapsed
-        let collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
+        // Render children if not collapsed (uses cached collapsed value)
         if has_children && !collapsed {
             for child in &entry.children {
                 if let Some(idx) = self.render_entry(ui, child, current_heading, focused_index, depth + 1, colors) {
@@ -361,11 +397,13 @@ impl TocPanel {
     /// Expand all entries
     pub fn expand_all(&mut self) {
         self.collapsed.fill(false);
+        self.cached_visible_indices = None; // Invalidate cache
     }
 
     /// Collapse all entries
     pub fn collapse_all(&mut self) {
         self.collapsed.fill(true);
+        self.cached_visible_indices = None; // Invalidate cache
     }
 
     /// Expand to show a specific heading by expanding all its ancestors
@@ -386,6 +424,9 @@ impl TocPanel {
 
         // Also expand the target entry
         self.collapsed[index] = false;
+
+        // Invalidate cache since collapsed state changed
+        self.cached_visible_indices = None;
     }
 
     /// Find all ancestor indices for a given entry index
@@ -424,17 +465,18 @@ impl TocPanel {
 }
 
 /// Truncate text to fit within a given width
-fn truncate_text(text: &str, max_width: f32, font_size: f32) -> String {
+/// Returns Cow::Borrowed when no truncation needed (zero allocation)
+fn truncate_text(text: &str, max_width: f32, font_size: f32) -> Cow<'_, str> {
     // Rough estimate: average character width is about 0.5 * font_size
     let char_width = font_size * 0.5;
     let max_chars = (max_width / char_width) as usize;
 
     if text.len() <= max_chars {
-        text.to_string()
+        Cow::Borrowed(text)
     } else if max_chars > 3 {
-        format!("{}...", &text[..max_chars - 3])
+        Cow::Owned(format!("{}...", &text[..max_chars - 3]))
     } else {
-        text.to_string()
+        Cow::Borrowed(text)
     }
 }
 
@@ -464,19 +506,25 @@ impl TocPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::borrow::Cow;
 
     #[test]
     fn test_toc_panel_new() {
         let panel = TocPanel::new();
         assert!(panel.collapsed.is_empty());
+        assert!(panel.cached_visible_indices.is_none());
     }
 
     #[test]
     fn test_truncate_text() {
-        assert_eq!(truncate_text("short", 100.0, 14.0), "short");
+        assert_eq!(truncate_text("short", 100.0, 14.0).as_ref(), "short");
+        // Verify no allocation for short text
+        assert!(matches!(truncate_text("short", 100.0, 14.0), Cow::Borrowed(_)));
         // With font_size 14.0, char_width ~7.0, max_chars for 50.0 width is ~7 chars
         let result = truncate_text("this is a very long text", 50.0, 14.0);
         assert!(result.ends_with("..."));
         assert!(result.len() < "this is a very long text".len());
+        // Verify truncated text is owned
+        assert!(matches!(result, Cow::Owned(_)));
     }
 }

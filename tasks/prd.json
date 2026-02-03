@@ -1,0 +1,212 @@
+{
+  "name": "mdview Performance & UX Improvements",
+  "branchName": "feature/performance-ux-improvements",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Profile and optimize initial markdown rendering",
+      "description": "As a user, I want large markdown files (5000+ lines) to render quickly so that I don't wait when opening documents.",
+      "acceptanceCriteria": [
+        "Profile the current rendering pipeline to identify bottlenecks",
+        "Optimize the pulldown-cmark event processing in markdown/renderer.rs",
+        "Reduce unnecessary widget allocations during initial render",
+        "Large files (5000+ lines) should feel noticeably faster to open",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 1,
+      "passes": true,
+      "dependsOn": [],
+      "labels": [
+        "performance"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-002",
+      "title": "Optimize scrolling performance for large documents",
+      "description": "As a user, I want smooth scrolling through large rendered documents without stutter or frame drops.",
+      "acceptanceCriteria": [
+        "Profile scroll performance with a 5000+ line rendered document",
+        "Reduce per-frame work during scroll (avoid re-layout of off-screen content where possible)",
+        "Ensure egui repaints are efficient (minimize unnecessary repaints)",
+        "Scrolling feels smooth on documents with 10000+ lines",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 1,
+      "passes": false,
+      "dependsOn": [
+        "US-001"
+      ],
+      "labels": [
+        "performance"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Implement viewport-aware rendering",
+      "description": "As a user, I want the app to prioritize rendering what's visible on screen so that perceived performance is optimal regardless of file size.",
+      "acceptanceCriteria": [
+        "Only render markdown elements that are in or near the current viewport",
+        "Off-screen content is rendered lazily as the user scrolls",
+        "Scroll position and document height remain accurate",
+        "Jumping to a TOC heading still works correctly with lazy rendering",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 1,
+      "passes": false,
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ],
+      "labels": [
+        "performance"
+      ],
+      "notes": "egui doesn't have native virtualization — may need to calculate element heights and skip rendering off-screen items in the scroll area"
+    },
+    {
+      "id": "US-004",
+      "title": "Add search/filter to the TOC panel",
+      "description": "As a user, I want to search within the table of contents so that I can quickly find sections in large documents.",
+      "acceptanceCriteria": [
+        "Add a text input field at the top of the TOC panel",
+        "Typing filters headings in real-time (fuzzy or substring)",
+        "Non-matching headings are hidden or dimmed",
+        "Clearing the search restores the full TOC",
+        "Clicking a filtered result navigates to that section",
+        "Filter field is accessible via keyboard shortcut",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 2,
+      "passes": false,
+      "dependsOn": [],
+      "labels": [
+        "ux",
+        "toc"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Improve typography hierarchy and readability",
+      "description": "As a user, I want clear visual distinction between heading levels and comfortable reading spacing so that documents are easy to scan and read.",
+      "acceptanceCriteria": [
+        "Increase size/weight contrast between H1-H6 headings",
+        "Improve line height and paragraph spacing for body text",
+        "Add configurable font size (zoom in/out via keyboard shortcut or menu)",
+        "Typography changes respect the current theme (light/dark)",
+        "Zoom level persists in config",
+        "Font size adjustable via Ctrl+/Ctrl- (Cmd+/Cmd- on macOS)",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 2,
+      "passes": false,
+      "dependsOn": [],
+      "labels": [
+        "ux",
+        "typography"
+      ],
+      "notes": "Store zoom in AppState, apply as a multiplier to base font sizes in the theme"
+    },
+    {
+      "id": "US-006",
+      "title": "Add smooth scrolling for TOC navigation",
+      "description": "As a user, I want smooth animated scrolling when clicking a TOC entry so that I maintain spatial context.",
+      "acceptanceCriteria": [
+        "Clicking a TOC entry smoothly scrolls to the target heading (not an instant jump)",
+        "Animation duration is reasonable (~200-400ms)",
+        "Smooth scroll can be interrupted by user input (manual scroll, another click)",
+        "Works correctly with viewport-aware rendering (US-003)",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 3,
+      "passes": false,
+      "dependsOn": [
+        "US-003"
+      ],
+      "labels": [
+        "ux",
+        "animation"
+      ],
+      "notes": "egui's ScrollArea supports programmatic scroll offset — animate by interpolating offset over frames"
+    },
+    {
+      "id": "US-007",
+      "title": "Add animated TOC panel open/close",
+      "description": "As a user, I want the TOC panel to open and close with a smooth animation so the UI feels polished.",
+      "acceptanceCriteria": [
+        "TOC panel slides in/out when toggled",
+        "Animation is smooth and doesn't cause layout jank",
+        "Content area resizes smoothly alongside the panel",
+        "Animation duration is short (~150-250ms)",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 3,
+      "passes": false,
+      "dependsOn": [],
+      "labels": [
+        "ux",
+        "animation"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Add fade transitions when switching files",
+      "description": "As a user, I want a subtle fade transition when switching between files so the experience feels smooth rather than jarring.",
+      "acceptanceCriteria": [
+        "Switching files shows a brief fade-out/fade-in transition",
+        "Transition is fast enough to not feel slow (~150-200ms)",
+        "Transition does not block user input",
+        "Works correctly with file browser and recent files",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 3,
+      "passes": false,
+      "dependsOn": [],
+      "labels": [
+        "ux",
+        "animation"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Improve syntax highlighting in code blocks",
+      "description": "As a user, I want better syntax highlighting with more language support, theme-aware colors, and line numbers so that code blocks are easy to read.",
+      "acceptanceCriteria": [
+        "Add support for more languages (Rust, Python, JavaScript, TypeScript, Go, C/C++, Java, TOML, YAML, JSON, Bash, SQL at minimum)",
+        "Syntax highlighting colors adapt to the current theme (light/dark)",
+        "Add optional line numbers in code blocks",
+        "Line numbers can be toggled via config setting",
+        "Code block rendering performance does not regress",
+        "cargo test passes",
+        "cargo clippy clean",
+        "cargo check no warnings"
+      ],
+      "priority": 2,
+      "passes": false,
+      "dependsOn": [],
+      "labels": [
+        "ux",
+        "syntax-highlighting"
+      ],
+      "notes": "Consider syntect crate if not already used; ensure it integrates with theme colors"
+    }
+  ],
+  "metadata": {
+    "updatedAt": "2026-02-03T07:20:28.430Z"
+  }
+}

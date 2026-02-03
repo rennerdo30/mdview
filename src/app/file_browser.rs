@@ -265,7 +265,7 @@ impl FileBrowserPanel {
                         .map(|f| f == path.as_path())
                         .unwrap_or(false);
 
-                    let response = self.render_entry_data(ui, &name, *is_dir, *depth, *is_expanded, idx, is_current);
+                    let response = self.render_entry_data(ui, name, *is_dir, *depth, *is_expanded, idx, is_current);
 
                     if response.clicked() {
                         if *is_dir {
@@ -359,9 +359,7 @@ impl FileBrowserPanel {
             icon_color,
         );
 
-        let text_color = if is_current {
-            palette::TEXT_PRIMARY
-        } else if is_hovered {
+        let text_color = if is_current || is_hovered {
             palette::TEXT_PRIMARY
         } else {
             palette::TEXT_SECONDARY

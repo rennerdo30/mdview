@@ -1,10 +1,10 @@
 //! PDF export using printpdf
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::io::BufWriter;
 
-use printpdf::{BuiltinFont, Mm, PdfDocument};
-use pulldown_cmark::{Event, Tag, TagEnd, HeadingLevel};
+use printpdf::{BuiltinFont, Mm, PdfDocument, Image, ImageTransform};
+use pulldown_cmark::{Event, Tag, TagEnd, HeadingLevel, CodeBlockKind};
 
 use crate::config::Config;
 use crate::config::defaults::heading_size_multiplier;
@@ -22,6 +22,16 @@ pub fn export_to_pdf(
     events: &[Event<'_>],
     output_path: &Path,
     config: &Config,
+) -> Result<(), PdfError> {
+    export_to_pdf_with_base(events, output_path, config, None)
+}
+
+/// Export markdown events to PDF with a base path for resolving relative image paths
+pub fn export_to_pdf_with_base(
+    events: &[Event<'_>],
+    output_path: &Path,
+    config: &Config,
+    base_path: Option<&Path>,
 ) -> Result<(), PdfError> {
     let (width_mm, height_mm) = match config.export.page_size.to_lowercase().as_str() {
         "letter" => (LETTER_WIDTH_MM, LETTER_HEIGHT_MM),
@@ -57,6 +67,7 @@ pub fn export_to_pdf(
         base_font_size: 12.0,
         in_code_block: false,
         code_content: String::new(),
+        code_language: None,
         text_buffer: String::new(),
         heading_level: 0,
         list_depth: 0,
@@ -67,6 +78,9 @@ pub fn export_to_pdf(
         is_dark_theme,
         custom_heading_color: config.theme.colors.heading.clone(),
         custom_code_color: config.theme.colors.code_text.clone(),
+        syntax_theme: config.markdown.syntax_theme.clone(),
+        syntax_highlighting_enabled: config.markdown.syntax_highlighting,
+        base_path: base_path.map(|p| p.to_path_buf()),
         toc_entries: Vec::new(),
     };
 
@@ -113,6 +127,7 @@ struct PdfExporter {
     base_font_size: f32,
     in_code_block: bool,
     code_content: String,
+    code_language: Option<String>,
     text_buffer: String,
     heading_level: usize,
     list_depth: usize,
@@ -126,6 +141,12 @@ struct PdfExporter {
     custom_heading_color: Option<String>,
     /// Custom code color from config (hex)
     custom_code_color: Option<String>,
+    /// Syntax theme for code highlighting
+    syntax_theme: String,
+    /// Whether syntax highlighting is enabled
+    syntax_highlighting_enabled: bool,
+    /// Base path for resolving relative image paths
+    base_path: Option<PathBuf>,
     toc_entries: Vec<TocPdfEntry>,
 }
 
@@ -306,6 +327,10 @@ impl PdfExporter {
     ) -> Result<(), PdfError> {
         for event in events {
             match event {
+                Event::Start(Tag::Image { dest_url, title, .. }) => {
+                    // Handle image inline instead of in handle_start_tag
+                    self.draw_image(doc, dest_url, title)?;
+                }
                 Event::Start(tag) => self.handle_start_tag(tag),
                 Event::End(tag) => self.handle_end_tag(doc, tag, font, font_bold, font_mono)?,
                 Event::Text(text) => {
@@ -345,9 +370,13 @@ impl PdfExporter {
                     HeadingLevel::H6 => 6,
                 };
             }
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(kind) => {
                 self.in_code_block = true;
                 self.code_content.clear();
+                self.code_language = match kind {
+                    CodeBlockKind::Fenced(lang) if !lang.is_empty() => Some(lang.to_string()),
+                    _ => None,
+                };
             }
             Tag::List(_) => {
                 self.list_depth += 1;
@@ -397,8 +426,9 @@ impl PdfExporter {
             }
             TagEnd::CodeBlock => {
                 let code = std::mem::take(&mut self.code_content);
+                let language = self.code_language.take();
                 if !code.is_empty() {
-                    self.draw_code_block(doc, &code, font_mono)?;
+                    self.draw_code_block(doc, &code, language.as_deref(), font_mono)?;
                 }
                 self.in_code_block = false;
             }
@@ -685,11 +715,21 @@ impl PdfExporter {
         &mut self,
         doc: &printpdf::PdfDocumentReference,
         code: &str,
+        language: Option<&str>,
         font: &printpdf::IndirectFontRef,
     ) -> Result<(), PdfError> {
         let code_font_size = self.font_size * 0.9;
         let code_line_height = self.line_height * 0.9;
 
+        // Try syntax highlighting if enabled
+        #[cfg(feature = "syntax-highlighting")]
+        if self.syntax_highlighting_enabled {
+            if let Some(highlighted) = highlight_code_for_pdf(code, language, &self.syntax_theme) {
+                return self.draw_highlighted_code_block(doc, &highlighted, code_font_size, code_line_height, font);
+            }
+        }
+
+        // Fallback: render without highlighting
         for line in code.lines() {
             self.ensure_space(doc, code_line_height)?;
 
@@ -763,6 +803,303 @@ impl PdfExporter {
         layer.add_line(line);
 
         self.cursor_y -= 3.0;
+
+        Ok(())
+    }
+
+    /// Draw an image at the current cursor position
+    fn draw_image(
+        &mut self,
+        doc: &printpdf::PdfDocumentReference,
+        url: &str,
+        title: &str,
+    ) -> Result<(), PdfError> {
+        // Skip remote URLs - only support local images
+        if url.starts_with("http://") || url.starts_with("https://") {
+            log::debug!("Skipping remote image in PDF (not supported): {}", url);
+            return Ok(());
+        }
+
+        // Resolve the image path
+        let image_path = self.resolve_image_path(url);
+
+        let Some(path) = image_path else {
+            log::warn!("Could not resolve image path: {}", url);
+            return Ok(());
+        };
+
+        if !path.exists() {
+            log::warn!("Image file not found: {}", path.display());
+            return Ok(());
+        }
+
+        // Try to load and embed the image
+        match self.load_and_embed_image(doc, &path) {
+            Ok(()) => {
+                // Add caption if there's a title
+                if !title.is_empty() {
+                    self.cursor_y -= 2.0;
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to embed image {}: {}", path.display(), e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a relative image path to an absolute path
+    fn resolve_image_path(&self, url: &str) -> Option<PathBuf> {
+        // If it's already absolute, use it directly
+        let path = PathBuf::from(url);
+        if path.is_absolute() {
+            return Some(path);
+        }
+
+        // Try to resolve relative to base path
+        if let Some(base) = &self.base_path {
+            let resolved = base.join(url);
+            if resolved.exists() {
+                return Some(resolved);
+            }
+        }
+
+        // Try current directory as fallback
+        let cwd_path = std::env::current_dir().ok()?.join(url);
+        if cwd_path.exists() {
+            return Some(cwd_path);
+        }
+
+        None
+    }
+
+    /// Load and embed an image into the PDF
+    fn load_and_embed_image(
+        &mut self,
+        doc: &printpdf::PdfDocumentReference,
+        path: &Path,
+    ) -> Result<(), PdfError> {
+        use std::io::Cursor;
+
+        // Read the image file
+        let image_data = std::fs::read(path)
+            .map_err(|e| PdfError::Io(format!("Failed to read image: {}", e)))?;
+
+        // Try to create an image decoder based on file extension
+        let extension = path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+
+        let cursor = Cursor::new(&image_data);
+
+        // Create decoder based on extension and try to create Image
+        // Use printpdf::image_crate which is the internal re-export of the image crate
+        // that printpdf uses, avoiding version mismatch issues
+        use printpdf::image_crate::{codecs, ImageDecoder};
+
+        let (image, width, height) = match extension.as_str() {
+            "png" => {
+                let decoder = codecs::png::PngDecoder::new(cursor)
+                    .map_err(|e| PdfError::Io(format!("Failed to decode PNG: {}", e)))?;
+                let (w, h) = decoder.dimensions();
+                let img = Image::try_from(decoder)
+                    .map_err(|e| PdfError::Io(format!("Failed to create image: {:?}", e)))?;
+                (img, w, h)
+            }
+            "jpg" | "jpeg" => {
+                let decoder = codecs::jpeg::JpegDecoder::new(cursor)
+                    .map_err(|e| PdfError::Io(format!("Failed to decode JPEG: {}", e)))?;
+                let (w, h) = decoder.dimensions();
+                let img = Image::try_from(decoder)
+                    .map_err(|e| PdfError::Io(format!("Failed to create image: {:?}", e)))?;
+                (img, w, h)
+            }
+            "bmp" => {
+                let decoder = codecs::bmp::BmpDecoder::new(cursor)
+                    .map_err(|e| PdfError::Io(format!("Failed to decode BMP: {}", e)))?;
+                let (w, h) = decoder.dimensions();
+                let img = Image::try_from(decoder)
+                    .map_err(|e| PdfError::Io(format!("Failed to create image: {:?}", e)))?;
+                (img, w, h)
+            }
+            "gif" => {
+                let decoder = codecs::gif::GifDecoder::new(cursor)
+                    .map_err(|e| PdfError::Io(format!("Failed to decode GIF: {}", e)))?;
+                let (w, h) = decoder.dimensions();
+                let img = Image::try_from(decoder)
+                    .map_err(|e| PdfError::Io(format!("Failed to create image: {:?}", e)))?;
+                (img, w, h)
+            }
+            _ => {
+                return Err(PdfError::Io(format!("Unsupported image format: {}", extension)));
+            }
+        };
+
+        // Calculate image dimensions in mm (assuming 150 DPI for reasonable size)
+        let dpi = 150.0;
+        let width_mm = (width as f32 / dpi) * 25.4;
+        let height_mm = (height as f32 / dpi) * 25.4;
+
+        // Scale to fit page width if needed
+        let max_width = self.width_mm - (2.0 * self.margin_mm);
+        let scale = if width_mm > max_width {
+            max_width / width_mm
+        } else {
+            1.0
+        };
+        let final_height_mm = height_mm * scale;
+
+        // Ensure we have enough space for the image
+        self.ensure_space(doc, final_height_mm + 5.0)?;
+
+        // Get the current layer
+        let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+
+        // Calculate position (images are positioned from bottom-left)
+        let x = self.margin_mm;
+        let y = self.cursor_y - final_height_mm;
+
+        // Add image to layer with transform
+        image.add_to_layer(
+            layer,
+            ImageTransform {
+                translate_x: Some(Mm(x)),
+                translate_y: Some(Mm(y)),
+                dpi: Some(dpi / scale), // Adjust DPI for scaling
+                ..Default::default()
+            },
+        );
+
+        // Move cursor down past the image
+        self.cursor_y -= final_height_mm + 5.0;
+
+        Ok(())
+    }
+}
+
+/// A highlighted token for PDF rendering
+#[cfg(feature = "syntax-highlighting")]
+struct HighlightedToken {
+    text: String,
+    color: (f32, f32, f32), // RGB 0.0-1.0
+}
+
+/// A line of highlighted tokens
+#[cfg(feature = "syntax-highlighting")]
+struct HighlightedLine {
+    tokens: Vec<HighlightedToken>,
+}
+
+/// Highlighted code ready for PDF rendering
+#[cfg(feature = "syntax-highlighting")]
+struct HighlightedCode {
+    lines: Vec<HighlightedLine>,
+}
+
+/// Highlight code for PDF export using syntect
+#[cfg(feature = "syntax-highlighting")]
+fn highlight_code_for_pdf(code: &str, language: Option<&str>, theme_name: &str) -> Option<HighlightedCode> {
+    use syntect::highlighting::ThemeSet;
+    use syntect::parsing::SyntaxSet;
+    use syntect::easy::HighlightLines;
+    use std::sync::OnceLock;
+
+    // Lazy-load syntax and theme sets
+    static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+    static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
+
+    let ss = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines);
+    let ts = THEME_SET.get_or_init(ThemeSet::load_defaults);
+
+    // Find syntax for the language
+    let syntax = language
+        .and_then(|lang| ss.find_syntax_by_token(lang))
+        .unwrap_or_else(|| ss.find_syntax_plain_text());
+
+    // Use theme from config, falling back to base16-ocean.dark
+    let theme = ts.themes.get(theme_name)
+        .or_else(|| ts.themes.get("base16-ocean.dark"))
+        .or_else(|| ts.themes.values().next())?;
+
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let mut lines = Vec::new();
+
+    for line in code.lines() {
+        let Ok(ranges) = highlighter.highlight_line(line, ss) else {
+            return None;
+        };
+
+        let tokens: Vec<HighlightedToken> = ranges
+            .into_iter()
+            .map(|(style, text)| {
+                let color = (
+                    style.foreground.r as f32 / 255.0,
+                    style.foreground.g as f32 / 255.0,
+                    style.foreground.b as f32 / 255.0,
+                );
+                HighlightedToken {
+                    text: text.to_string(),
+                    color,
+                }
+            })
+            .collect();
+
+        lines.push(HighlightedLine { tokens });
+    }
+
+    Some(HighlightedCode { lines })
+}
+
+impl PdfExporter {
+    /// Draw a code block with syntax highlighting
+    #[cfg(feature = "syntax-highlighting")]
+    fn draw_highlighted_code_block(
+        &mut self,
+        doc: &printpdf::PdfDocumentReference,
+        highlighted: &HighlightedCode,
+        code_font_size: f32,
+        code_line_height: f32,
+        font: &printpdf::IndirectFontRef,
+    ) -> Result<(), PdfError> {
+        // Approximate character width for monospace font at this size
+        // Courier at 12pt is roughly 7.2pt per character, scale proportionally
+        let char_width_mm = code_font_size * 0.35; // Approximate mm per character
+
+        for line in &highlighted.lines {
+            self.ensure_space(doc, code_line_height)?;
+
+            let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+            let mut x_offset = self.margin_mm + 5.0;
+
+            for token in &line.tokens {
+                // Set the token's color
+                let color = printpdf::Color::Rgb(printpdf::Rgb::new(
+                    token.color.0,
+                    token.color.1,
+                    token.color.2,
+                    None,
+                ));
+                layer.set_fill_color(color);
+
+                // Render the token
+                layer.use_text(
+                    &token.text,
+                    code_font_size,
+                    Mm(x_offset),
+                    Mm(self.cursor_y),
+                    font,
+                );
+
+                // Advance x position based on character count
+                x_offset += token.text.len() as f32 * char_width_mm;
+            }
+
+            self.cursor_y -= code_line_height;
+        }
+
+        self.cursor_y -= 2.0;
 
         Ok(())
     }

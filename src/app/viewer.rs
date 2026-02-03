@@ -771,16 +771,29 @@ impl MdViewApp {
         // Use cached keybindings for efficiency (avoids parsing strings 60 times/second)
         let kb = &self.cached_keybindings;
 
-        let toggle_toc = kb.toggle_toc.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let export_pdf = kb.export_pdf.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let reload = kb.reload.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let open_file = kb.open_file.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let open_folder = kb.open_folder.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let toggle_file_browser = kb.toggle_file_browser.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let quit = kb.quit.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let add_annotation = kb.add_annotation.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let add_bookmark = kb.add_bookmark.as_ref().is_some_and(|k| is_parsed_keybinding_pressed(ctx, k));
-        let escape = ctx.input(|i| i.key_pressed(Key::Escape));
+        // Batch all keyboard input checks into a single ctx.input() call for efficiency
+        let (toggle_toc, export_pdf, reload, open_file, open_folder, toggle_file_browser, quit, add_annotation, add_bookmark, escape) = ctx.input(|i| {
+            let check = |parsed: &Option<ParsedKeybinding>| -> bool {
+                parsed.as_ref().is_some_and(|p| {
+                    i.key_pressed(p.key) &&
+                    i.modifiers.command == p.modifiers.command &&
+                    i.modifiers.alt == p.modifiers.alt &&
+                    i.modifiers.shift == p.modifiers.shift
+                })
+            };
+            (
+                check(&kb.toggle_toc),
+                check(&kb.export_pdf),
+                check(&kb.reload),
+                check(&kb.open_file),
+                check(&kb.open_folder),
+                check(&kb.toggle_file_browser),
+                check(&kb.quit),
+                check(&kb.add_annotation),
+                check(&kb.add_bookmark),
+                i.key_pressed(Key::Escape),
+            )
+        });
 
         if toggle_toc {
             self.state.toggle_toc();
@@ -1035,12 +1048,12 @@ impl MdViewApp {
     }
 
     fn render_menu_bar(&mut self, ctx: &egui::Context) {
+        // Use cached recent files to avoid per-frame allocation
         let recent_files: Vec<_> = self
             .state
-            .recent_files
-            .get_existing()
+            .get_cached_recent_files()
             .iter()
-            .map(|f| (f.path.clone(), f.display_name().to_string()))
+            .map(|(path, name, _)| (path.clone(), name.clone()))
             .collect();
 
         let mut actions = MenuActions::default();
@@ -1287,6 +1300,7 @@ impl MdViewApp {
         }
         if actions.clear_recent {
             self.state.recent_files.clear();
+            self.state.invalidate_recent_files_cache();
             let _ = crate::recent::save_recent_files(&self.state.recent_files);
         }
         if let Some(path) = actions.file_to_open {
@@ -1502,13 +1516,11 @@ impl MdViewApp {
         let is_dark = ctx.style().visuals.dark_mode;
         let main_bg = if is_dark { palette::BG_BASE } else { palette::light::BG_BASE };
 
+        // Use cached recent files to avoid per-frame allocation
         let recent_files: Vec<_> = self
             .state
-            .recent_files
-            .get_existing()
-            .iter()
-            .map(|f| (f.path.clone(), f.display_name().to_string(), f.path.parent().and_then(|p| p.to_str()).unwrap_or("").to_string()))
-            .collect();
+            .get_cached_recent_files()
+            .to_vec();
 
         let mut file_to_open: Option<PathBuf> = None;
 
@@ -1550,7 +1562,9 @@ impl MdViewApp {
                 #[cfg(feature = "plugins")]
                 self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnPreRender);
 
-                let mut heading_positions = Vec::new();
+                // Reuse heading_positions Vec instead of allocating new one per frame
+                let mut heading_positions = std::mem::take(&mut self.state.heading_positions);
+                heading_positions.clear();
                 let scroll_target = self.state.scroll_to_heading.take();
 
                 egui::ScrollArea::vertical()

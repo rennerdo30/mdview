@@ -9,5 +9,3 @@ pub mod lua_runtime;
 
 #[cfg(feature = "plugins")]
 pub use lua_runtime::LuaRuntime;
-#[cfg(feature = "plugins")]
-pub use api::PluginState;
