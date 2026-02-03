@@ -130,11 +130,14 @@ mod theme_colors {
     }
 }
 
-/// Estimated height of a single line of text in egui (used for viewport culling estimates)
-const ESTIMATED_LINE_HEIGHT: f32 = 20.0;
+/// Estimated height of a single line of text in egui (used for viewport culling estimates).
+/// Based on default font size 14.0 * line_height 1.6 = 22.4px.
+const ESTIMATED_LINE_HEIGHT: f32 = 22.4;
 
-/// Average character width estimate for proportional font (used for height estimation)
-const ESTIMATED_CHAR_WIDTH: f32 = 8.0;
+/// Average character width estimate for proportional font (used for height estimation).
+/// Slightly narrow to produce conservative (taller) height estimates — overestimates cause
+/// less visible layout shift than underestimates when blocks transition from culled to rendered.
+const ESTIMATED_CHAR_WIDTH: f32 = 7.0;
 
 /// A pre-computed block boundary in the event stream.
 /// Blocks represent top-level renderable elements (paragraphs, headings, code blocks, etc.)
@@ -1038,9 +1041,18 @@ impl MarkdownRenderer {
             // Use actual measured height when available, otherwise estimated
             let block_height = block.height();
 
+            // Use a larger buffer for blocks that have never been measured so they get
+            // rendered and their actual height recorded before they reach the visible area.
+            // This prevents layout jumps when estimated heights differ from actual heights.
+            let effective_buffer = if block.actual_height.is_none() {
+                buffer * 1.5 // 3x viewport for unmeasured blocks (buffer is already 2x viewport)
+            } else {
+                buffer // 2x viewport for blocks with known heights
+            };
+
             // Check if this block is far outside the viewport
-            let is_above_viewport = cursor_y + block_height < viewport_top - buffer;
-            let is_below_viewport = cursor_y > viewport_bottom + buffer;
+            let is_above_viewport = cursor_y + block_height < viewport_top - effective_buffer;
+            let is_below_viewport = cursor_y > viewport_bottom + effective_buffer;
 
             // Special cases: always process headings (for TOC positions), footnote definitions,
             // and the block containing a scroll target heading
