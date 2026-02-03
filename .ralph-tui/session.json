@@ -3,10 +3,10 @@
   "sessionId": "f83e0d9c-3bf3-4f86-80f6-78c361442a2c",
   "status": "running",
   "startedAt": "2026-02-03T07:13:30.031Z",
-  "updatedAt": "2026-02-03T07:55:47.689Z",
-  "currentIteration": 6,
+  "updatedAt": "2026-02-03T07:59:54.093Z",
+  "currentIteration": 7,
   "maxIterations": 10,
-  "tasksCompleted": 6,
+  "tasksCompleted": 7,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -47,8 +47,8 @@
       {
         "id": "US-006",
         "title": "Add smooth scrolling for TOC navigation",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-007",
@@ -130,6 +130,16 @@
       "durationMs": 259420,
       "startedAt": "2026-02-03T07:47:14.024Z",
       "endedAt": "2026-02-03T07:51:33.444Z"
+    },
+    {
+      "iteration": 7,
+      "status": "completed",
+      "taskId": "US-006",
+      "taskTitle": "Add smooth scrolling for TOC navigation",
+      "taskCompleted": true,
+      "durationMs": 253184,
+      "startedAt": "2026-02-03T07:51:34.502Z",
+      "endedAt": "2026-02-03T07:55:47.686Z"
     }
   ],
   "skippedTaskIds": [],
