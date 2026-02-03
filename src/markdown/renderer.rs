@@ -1153,8 +1153,13 @@ impl MarkdownRenderer {
                 // Record heading position for TOC navigation
                 heading_positions.push(ui.cursor().top());
                 // Check if this is the scroll target - if so, scroll now (before rendering)
+                // Use a custom animation for smooth scrolling (200-400ms ease)
                 if self.scroll_target == Some(self.heading_index) {
-                    ui.scroll_to_cursor(Some(egui::Align::TOP));
+                    let animation = egui::style::ScrollAnimation {
+                        points_per_second: 800.0,
+                        duration: egui::emath::Rangef::new(0.2, 0.4),
+                    };
+                    ui.scroll_to_cursor_animation(Some(egui::Align::TOP), animation);
                 }
                 self.heading_index += 1;
             }
