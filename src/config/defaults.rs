@@ -6,13 +6,14 @@
 pub const WATCHER_DEBOUNCE_MS: u64 = 100;
 
 /// Heading size multipliers relative to base font size
+/// Designed for clear visual hierarchy with strong contrast between levels
 pub mod heading_sizes {
-    pub const H1: f32 = 2.0;
-    pub const H2: f32 = 1.5;
-    pub const H3: f32 = 1.25;
-    pub const H4: f32 = 1.1;
+    pub const H1: f32 = 2.2;
+    pub const H2: f32 = 1.7;
+    pub const H3: f32 = 1.35;
+    pub const H4: f32 = 1.15;
     pub const H5: f32 = 1.0;
-    pub const H6: f32 = 0.9;
+    pub const H6: f32 = 0.85;
 }
 
 /// Get heading size multiplier for a heading level

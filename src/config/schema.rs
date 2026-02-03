@@ -209,6 +209,9 @@ pub struct KeybindingsConfig {
     pub add_bookmark: String,
     pub toggle_file_browser: String,
     pub focus_toc_search: String,
+    pub zoom_in: String,
+    pub zoom_out: String,
+    pub zoom_reset: String,
 }
 
 impl Default for KeybindingsConfig {
@@ -224,6 +227,9 @@ impl Default for KeybindingsConfig {
             add_bookmark: "Ctrl+B".to_string(),
             toggle_file_browser: "Ctrl+E".to_string(),
             focus_toc_search: "Ctrl+F".to_string(),
+            zoom_in: "Ctrl+=".to_string(),
+            zoom_out: "Ctrl+-".to_string(),
+            zoom_reset: "Ctrl+0".to_string(),
         }
     }
 }
@@ -298,7 +304,7 @@ impl Default for FontConfig {
             heading: "sans-serif".to_string(),
             code: "monospace".to_string(),
             size: 14.0,
-            line_height: 1.5,
+            line_height: 1.6,
         }
     }
 }
@@ -326,9 +332,9 @@ pub struct SpacingConfig {
 impl Default for SpacingConfig {
     fn default() -> Self {
         Self {
-            paragraph: 12.0,
-            heading_top: 24.0,
-            heading_bottom: 8.0,
+            paragraph: 16.0,
+            heading_top: 28.0,
+            heading_bottom: 12.0,
             list_indent: 20.0,
             code_padding: 8.0,
         }

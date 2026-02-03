@@ -113,6 +113,10 @@ pub fn create_style(theme_name: &str, config: &Config) -> Style {
         FontId::monospace(base_size * 0.9),
     );
 
+    // Apply line height spacing - egui uses item_spacing.y as the baseline for line spacing
+    let line_height = config.theme.fonts.line_height;
+    style.spacing.item_spacing.y = (base_size * (line_height - 1.0)).max(4.0);
+
     // Animation
     style.animation_time = 0.12;
 

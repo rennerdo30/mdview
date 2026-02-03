@@ -29,6 +29,9 @@ struct CachedKeybindings {
     add_annotation: Option<ParsedKeybinding>,
     add_bookmark: Option<ParsedKeybinding>,
     focus_toc_search: Option<ParsedKeybinding>,
+    zoom_in: Option<ParsedKeybinding>,
+    zoom_out: Option<ParsedKeybinding>,
+    zoom_reset: Option<ParsedKeybinding>,
 }
 
 impl CachedKeybindings {
@@ -44,6 +47,9 @@ impl CachedKeybindings {
             add_annotation: parse_keybinding(&config.add_annotation),
             add_bookmark: parse_keybinding(&config.add_bookmark),
             focus_toc_search: parse_keybinding(&config.focus_toc_search),
+            zoom_in: parse_keybinding(&config.zoom_in),
+            zoom_out: parse_keybinding(&config.zoom_out),
+            zoom_reset: parse_keybinding(&config.zoom_reset),
         }
     }
 }
@@ -117,6 +123,9 @@ fn parse_keybinding(binding: &str) -> Option<ParsedKeybinding> {
         "DOWN" | "ARROWDOWN" => Key::ArrowDown,
         "LEFT" | "ARROWLEFT" => Key::ArrowLeft,
         "RIGHT" | "ARROWRIGHT" => Key::ArrowRight,
+        "=" | "EQUAL" | "EQUALS" => Key::Equals,
+        "+" => Key::Plus,
+        "-" | "MINUS" | "DASH" => Key::Minus,
         _ => return None,
     };
 
@@ -723,15 +732,24 @@ impl MdViewApp {
                 MenuAction::ZoomIn => {
                     self.state.config.theme.fonts.size =
                         (self.state.config.theme.fonts.size + 1.0).min(32.0);
+                    let style = create_style(self.state.current_theme(), &self.state.config);
+                    ctx.set_style(style);
+                    self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
                     self.save_config_debounced();
                 }
                 MenuAction::ZoomOut => {
                     self.state.config.theme.fonts.size =
                         (self.state.config.theme.fonts.size - 1.0).max(8.0);
+                    let style = create_style(self.state.current_theme(), &self.state.config);
+                    ctx.set_style(style);
+                    self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
                     self.save_config_debounced();
                 }
                 MenuAction::ZoomReset => {
                     self.state.config.theme.fonts.size = 14.0;
+                    let style = create_style(self.state.current_theme(), &self.state.config);
+                    ctx.set_style(style);
+                    self.state.set_status("Zoom: Reset to default");
                     self.save_config_debounced();
                 }
                 MenuAction::About => {
@@ -774,7 +792,7 @@ impl MdViewApp {
         let kb = &self.cached_keybindings;
 
         // Batch all keyboard input checks into a single ctx.input() call for efficiency
-        let (toggle_toc, export_pdf, reload, open_file, open_folder, toggle_file_browser, quit, add_annotation, add_bookmark, focus_toc_search, escape) = ctx.input(|i| {
+        let (toggle_toc, export_pdf, reload, open_file, open_folder, toggle_file_browser, quit, add_annotation, add_bookmark, focus_toc_search, zoom_in, zoom_out, zoom_reset, escape) = ctx.input(|i| {
             let check = |parsed: &Option<ParsedKeybinding>| -> bool {
                 parsed.as_ref().is_some_and(|p| {
                     i.key_pressed(p.key) &&
@@ -794,6 +812,9 @@ impl MdViewApp {
                 check(&kb.add_annotation),
                 check(&kb.add_bookmark),
                 check(&kb.focus_toc_search),
+                check(&kb.zoom_in),
+                check(&kb.zoom_out),
+                check(&kb.zoom_reset),
                 i.key_pressed(Key::Escape),
             )
         });
@@ -864,6 +885,32 @@ impl MdViewApp {
                 self.state.set_toc_visible(true);
             }
             self.toc_panel.focus_search();
+        }
+
+        if zoom_in {
+            self.state.config.theme.fonts.size =
+                (self.state.config.theme.fonts.size + 1.0).min(32.0);
+            let style = create_style(self.state.current_theme(), &self.state.config);
+            ctx.set_style(style);
+            self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
+            self.save_config_debounced();
+        }
+
+        if zoom_out {
+            self.state.config.theme.fonts.size =
+                (self.state.config.theme.fonts.size - 1.0).max(8.0);
+            let style = create_style(self.state.current_theme(), &self.state.config);
+            ctx.set_style(style);
+            self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
+            self.save_config_debounced();
+        }
+
+        if zoom_reset {
+            self.state.config.theme.fonts.size = 14.0;
+            let style = create_style(self.state.current_theme(), &self.state.config);
+            ctx.set_style(style);
+            self.state.set_status("Zoom: Reset to default");
+            self.save_config_debounced();
         }
 
         if escape {

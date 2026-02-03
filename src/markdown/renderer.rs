@@ -1311,30 +1311,59 @@ impl MarkdownRenderer {
             return;
         }
 
+        // Scale heading spacing by level: H1 gets full spacing, H6 gets less
+        let level = self.heading_level;
+        let spacing_scale = match level {
+            1 => 1.4,
+            2 => 1.2,
+            3 => 1.0,
+            4 => 0.85,
+            5 => 0.7,
+            _ => 0.6,
+        };
+        let top_space = spacing.heading_top * spacing_scale;
+        let bottom_space = spacing.heading_bottom * spacing_scale;
+
         // Viewport culling: skip expensive widget creation for offscreen headings
         // (heading positions are still recorded in handle_start_tag for TOC)
-        let total_spacing = spacing.heading_top + spacing.heading_bottom;
+        let total_spacing = top_space + bottom_space;
         if self.try_cull_text_element(ui, &text, total_spacing) {
             return;
         }
 
-        ui.add_space(spacing.heading_top);
+        ui.add_space(top_space);
 
-        let size_multiplier = heading_size_multiplier(self.heading_level);
+        let size_multiplier = heading_size_multiplier(level);
         let font_size = base_font_size * size_multiplier;
 
         let mut rich_text = RichText::new(&text)
             .size(font_size)
             .strong();
 
-        // Apply custom heading color if provided
+        // H5 and H6 use lighter weight to further differentiate from larger headings
+        if level >= 5 {
+            rich_text = RichText::new(&text)
+                .size(font_size);
+            // H6 uses muted/secondary text appearance
+            if level >= 6 {
+                let is_dark = ui.visuals().dark_mode;
+                let muted_color = if is_dark {
+                    Color32::from_rgb(160, 160, 176)
+                } else {
+                    Color32::from_rgb(90, 90, 105)
+                };
+                rich_text = rich_text.color(muted_color);
+            }
+        }
+
+        // Apply custom heading color if provided (overrides level-based color)
         if let Some(color) = heading_color {
             rich_text = rich_text.color(color);
         }
 
         ui.label(rich_text);
 
-        ui.add_space(spacing.heading_bottom);
+        ui.add_space(bottom_space);
     }
 
     fn render_paragraph(
