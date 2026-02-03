@@ -3,10 +3,10 @@
   "sessionId": "f83e0d9c-3bf3-4f86-80f6-78c361442a2c",
   "status": "running",
   "startedAt": "2026-02-03T07:13:30.031Z",
-  "updatedAt": "2026-02-03T07:51:33.448Z",
-  "currentIteration": 5,
+  "updatedAt": "2026-02-03T07:55:47.689Z",
+  "currentIteration": 6,
   "maxIterations": 10,
-  "tasksCompleted": 5,
+  "tasksCompleted": 6,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -65,8 +65,8 @@
       {
         "id": "US-009",
         "title": "Improve syntax highlighting in code blocks",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       }
     ]
   },
@@ -120,6 +120,16 @@
       "durationMs": 395508,
       "startedAt": "2026-02-03T07:40:37.461Z",
       "endedAt": "2026-02-03T07:47:12.969Z"
+    },
+    {
+      "iteration": 6,
+      "status": "completed",
+      "taskId": "US-009",
+      "taskTitle": "Improve syntax highlighting in code blocks",
+      "taskCompleted": true,
+      "durationMs": 259420,
+      "startedAt": "2026-02-03T07:47:14.024Z",
+      "endedAt": "2026-02-03T07:51:33.444Z"
     }
   ],
   "skippedTaskIds": [],
