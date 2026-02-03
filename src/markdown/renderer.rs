@@ -196,7 +196,7 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     }
                 }
                 let num_lines = (text_len as f32 / chars_per_line).ceil().max(1.0);
-                let height = num_lines * ESTIMATED_LINE_HEIGHT + 12.0; // paragraph spacing
+                let height = num_lines * ESTIMATED_LINE_HEIGHT + 16.0; // paragraph spacing (matches SpacingConfig::default().paragraph)
                 blocks.push(ContentBlock {
                     event_start: start,
                     event_end: i,
@@ -586,28 +586,6 @@ impl MarkdownRenderer {
             }
             None => true, // If no rect cached, assume visible
         }
-    }
-
-    /// Skip rendering an element by allocating estimated space without drawing widgets.
-    /// This is used for viewport culling of offscreen paragraphs, headings, and list items.
-    /// Returns true if the element was culled (skipped), false if it should be rendered normally.
-    fn try_cull_text_element(&mut self, ui: &mut Ui, text: &str, extra_spacing: f32) -> bool {
-        let cursor_y = ui.cursor().top();
-        if self.is_position_visible(cursor_y) {
-            return false;
-        }
-
-        // Estimate height based on text length and available width
-        let available_width = ui.available_width();
-        // Rough estimate: assume ~8px per character width for proportional font
-        let chars_per_line = (available_width / 8.0).max(1.0);
-        let num_lines = (text.len() as f32 / chars_per_line).ceil().max(1.0);
-        let estimated_height = num_lines * ESTIMATED_LINE_HEIGHT + extra_spacing;
-
-        // Allocate blank space instead of rendering
-        ui.allocate_space(Vec2::new(available_width, estimated_height));
-        self.culled_count += 1;
-        true
     }
 
     /// Clear the image cache (call when document changes)
@@ -1020,6 +998,19 @@ impl MarkdownRenderer {
         let width_key = (available_width / 10.0) as u32;
         let mut block_map = match self.cached_block_map.take() {
             Some((id, w, blocks)) if id == events_id && w == width_key => blocks,
+            Some((id, _w, old_blocks)) if id == events_id => {
+                // Width changed but same document — recompute estimates but preserve
+                // actual_height measurements from previous frames to avoid layout jumps.
+                let mut new_blocks = compute_block_map(events, available_width);
+                for (new_block, old_block) in new_blocks.iter_mut().zip(old_blocks.iter()) {
+                    if new_block.event_start == old_block.event_start
+                        && new_block.event_end == old_block.event_end
+                    {
+                        new_block.actual_height = old_block.actual_height;
+                    }
+                }
+                new_blocks
+            }
             _ => compute_block_map(events, available_width),
         };
 
@@ -1345,13 +1336,6 @@ impl MarkdownRenderer {
         let top_space = spacing.heading_top * spacing_scale;
         let bottom_space = spacing.heading_bottom * spacing_scale;
 
-        // Viewport culling: skip expensive widget creation for offscreen headings
-        // (heading positions are still recorded in handle_start_tag for TOC)
-        let total_spacing = top_space + bottom_space;
-        if self.try_cull_text_element(ui, &text, total_spacing) {
-            return;
-        }
-
         ui.add_space(top_space);
 
         let size_multiplier = heading_size_multiplier(level);
@@ -1407,12 +1391,6 @@ impl MarkdownRenderer {
         let text_len = text.len();
         let start_offset = self.char_offset;
         let end_offset = start_offset + text_len;
-
-        // Viewport culling: skip expensive widget creation for offscreen paragraphs
-        if self.try_cull_text_element(ui, &text, spacing.paragraph) {
-            self.char_offset = end_offset;
-            return;
-        }
 
         // Check if any annotations overlap with this text (O(log n) binary search)
         let overlapping = annotation_index.in_range(start_offset, end_offset);
@@ -1581,11 +1559,6 @@ impl MarkdownRenderer {
     fn render_blockquote(&mut self, ui: &mut Ui, base_font_size: f32) {
         let text = std::mem::take(&mut self.text_buffer);
         if text.is_empty() {
-            return;
-        }
-
-        // Viewport culling for blockquotes
-        if self.try_cull_text_element(ui, &text, 8.0) {
             return;
         }
 
@@ -2402,17 +2375,6 @@ impl MarkdownRenderer {
     ) {
         let text = std::mem::take(&mut self.text_buffer);
 
-        // Viewport culling for list items
-        if self.try_cull_text_element(ui, &text, 0.0) {
-            // Still need to advance list numbering even when culled
-            if let Some(ref mut num) = self.list_number {
-                *num += 1;
-            } else {
-                self.task_list_marker.take();
-            }
-            return;
-        }
-
         let indent = self.list_depth as f32 * spacing.list_indent;
 
         ui.horizontal(|ui| {
@@ -2459,19 +2421,6 @@ impl MarkdownRenderer {
 
     fn render_table(&mut self, ui: &mut Ui, base_font_size: f32) {
         if self.table_header.is_empty() && self.table_rows.is_empty() {
-            return;
-        }
-
-        // Viewport culling for tables
-        let cursor_y = ui.cursor().top();
-        if !self.is_position_visible(cursor_y) {
-            // Estimate table height: header + rows, each ~24px
-            let num_rows = self.table_rows.len() + 1; // +1 for header
-            let estimated_height = num_rows as f32 * 24.0 + 24.0; // extra for padding
-            let available_width = ui.available_width();
-            ui.allocate_space(Vec2::new(available_width, estimated_height));
-            self.table_count += 1;
-            self.culled_count += 1;
             return;
         }
 
