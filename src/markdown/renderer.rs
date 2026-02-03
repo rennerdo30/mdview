@@ -133,6 +133,220 @@ mod theme_colors {
 /// Estimated height of a single line of text in egui (used for viewport culling estimates)
 const ESTIMATED_LINE_HEIGHT: f32 = 20.0;
 
+/// Average character width estimate for proportional font (used for height estimation)
+const ESTIMATED_CHAR_WIDTH: f32 = 8.0;
+
+/// A pre-computed block boundary in the event stream.
+/// Blocks represent top-level renderable elements (paragraphs, headings, code blocks, etc.)
+/// that can be skipped entirely during viewport culling without processing their events.
+#[derive(Debug, Clone)]
+struct ContentBlock {
+    /// Start index in the events slice (inclusive)
+    event_start: usize,
+    /// End index in the events slice (exclusive)
+    event_end: usize,
+    /// Estimated height of this block in pixels
+    estimated_height: f32,
+    /// Whether this block contains a heading (needed for TOC position tracking)
+    is_heading: bool,
+    /// Number of text bytes in this block (for char_offset tracking)
+    text_byte_len: usize,
+}
+
+/// Pre-compute block boundaries from a pulldown-cmark event stream.
+/// This allows the renderer to skip entire blocks that are off-screen without
+/// processing any of their events through the state machine.
+fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentBlock> {
+    let mut blocks = Vec::new();
+    let mut i = 0;
+    let chars_per_line = (available_width / ESTIMATED_CHAR_WIDTH).max(1.0);
+
+    while i < events.len() {
+        match &events[i] {
+            // Top-level block elements that we can skip as units
+            Event::Start(Tag::Paragraph) => {
+                let start = i;
+                let mut text_len = 0usize;
+                i += 1;
+                while i < events.len() {
+                    match &events[i] {
+                        Event::End(TagEnd::Paragraph) => { i += 1; break; }
+                        Event::Text(t) => { text_len += t.len(); i += 1; }
+                        Event::Code(c) => { text_len += c.len(); i += 1; }
+                        _ => { i += 1; }
+                    }
+                }
+                let num_lines = (text_len as f32 / chars_per_line).ceil().max(1.0);
+                let height = num_lines * ESTIMATED_LINE_HEIGHT + 12.0; // paragraph spacing
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: height,
+                    is_heading: false,
+                    text_byte_len: text_len,
+                });
+            }
+            Event::Start(Tag::Heading { .. }) => {
+                let start = i;
+                let mut text_len = 0usize;
+                i += 1;
+                while i < events.len() {
+                    match &events[i] {
+                        Event::End(TagEnd::Heading(_)) => { i += 1; break; }
+                        Event::Text(t) => { text_len += t.len(); i += 1; }
+                        _ => { i += 1; }
+                    }
+                }
+                let height = ESTIMATED_LINE_HEIGHT * 2.0 + 24.0; // heading + spacing
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: height,
+                    is_heading: true,
+                    text_byte_len: text_len,
+                });
+            }
+            Event::Start(Tag::CodeBlock(_)) => {
+                let start = i;
+                let mut text_len = 0usize;
+                i += 1;
+                while i < events.len() {
+                    match &events[i] {
+                        Event::End(TagEnd::CodeBlock) => { i += 1; break; }
+                        Event::Text(t) => { text_len += t.len(); i += 1; }
+                        _ => { i += 1; }
+                    }
+                }
+                let num_lines = text_len.to_string().len().max(
+                    events[start + 1..i].iter().filter(|e| matches!(e, Event::Text(_))).map(|e| {
+                        if let Event::Text(t) = e { t.lines().count() } else { 0 }
+                    }).sum::<usize>()
+                ).max(1);
+                let height = num_lines as f32 * ESTIMATED_LINE_HEIGHT + 32.0; // padding + margins
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: height,
+                    is_heading: false,
+                    text_byte_len: text_len,
+                });
+            }
+            Event::Start(Tag::BlockQuote(_)) => {
+                let start = i;
+                let mut text_len = 0usize;
+                let mut depth = 1;
+                i += 1;
+                while i < events.len() && depth > 0 {
+                    match &events[i] {
+                        Event::Start(Tag::BlockQuote(_)) => { depth += 1; }
+                        Event::End(TagEnd::BlockQuote(_)) => { depth -= 1; }
+                        Event::Text(t) => { text_len += t.len(); }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                let num_lines = (text_len as f32 / chars_per_line).ceil().max(1.0);
+                let height = num_lines * ESTIMATED_LINE_HEIGHT + 16.0;
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: height,
+                    is_heading: false,
+                    text_byte_len: text_len,
+                });
+            }
+            Event::Start(Tag::List(_)) => {
+                let start = i;
+                let mut text_len = 0usize;
+                let mut item_count = 0usize;
+                let mut depth = 1;
+                i += 1;
+                while i < events.len() && depth > 0 {
+                    match &events[i] {
+                        Event::Start(Tag::List(_)) => { depth += 1; }
+                        Event::End(TagEnd::List(_)) => { depth -= 1; }
+                        Event::Start(Tag::Item) => { item_count += 1; }
+                        Event::Text(t) => { text_len += t.len(); }
+                        Event::Code(c) => { text_len += c.len(); }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                let height = item_count as f32 * ESTIMATED_LINE_HEIGHT + 8.0;
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: height,
+                    is_heading: false,
+                    text_byte_len: text_len,
+                });
+            }
+            Event::Start(Tag::Table(_)) => {
+                let start = i;
+                let mut text_len = 0usize;
+                let mut row_count = 0usize;
+                let mut depth = 1;
+                i += 1;
+                while i < events.len() && depth > 0 {
+                    match &events[i] {
+                        Event::Start(Tag::Table(_)) => { depth += 1; }
+                        Event::End(TagEnd::Table) => { depth -= 1; }
+                        Event::Start(Tag::TableRow) | Event::Start(Tag::TableHead) => { row_count += 1; }
+                        Event::Text(t) => { text_len += t.len(); }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                let height = row_count as f32 * 24.0 + 40.0;
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: height,
+                    is_heading: false,
+                    text_byte_len: text_len,
+                });
+            }
+            Event::Start(Tag::FootnoteDefinition(_)) => {
+                // Footnote definitions are always processed (not culled)
+                let start = i;
+                let mut text_len = 0usize;
+                i += 1;
+                while i < events.len() {
+                    match &events[i] {
+                        Event::End(TagEnd::FootnoteDefinition) => { i += 1; break; }
+                        Event::Text(t) => { text_len += t.len(); i += 1; }
+                        _ => { i += 1; }
+                    }
+                }
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: 0.0, // footnotes rendered at end, height doesn't matter for culling
+                    is_heading: false,
+                    text_byte_len: text_len,
+                });
+            }
+            Event::Rule => {
+                blocks.push(ContentBlock {
+                    event_start: i,
+                    event_end: i + 1,
+                    estimated_height: 20.0,
+                    is_heading: false,
+                    text_byte_len: 0,
+                });
+                i += 1;
+            }
+            _ => {
+                // Single events that don't form blocks (soft break, etc.)
+                // These are rare at the top level; just advance
+                i += 1;
+            }
+        }
+    }
+
+    blocks
+}
+
 /// Markdown renderer that converts events to egui widgets
 pub struct MarkdownRenderer {
     /// Current text buffer for accumulating inline content
@@ -255,6 +469,14 @@ pub struct MarkdownRenderer {
 
     /// Number of elements skipped by viewport culling (for diagnostics)
     culled_count: usize,
+
+    /// Cached block map for event-level viewport culling
+    /// Invalidated when the events slice pointer changes
+    cached_block_map: Option<(usize, Vec<ContentBlock>)>,
+
+    /// Running Y offset accumulator for block-level culling
+    /// Tracks estimated cumulative height as blocks are skipped/rendered
+    block_y_offset: f32,
 }
 
 impl MarkdownRenderer {
@@ -305,6 +527,8 @@ impl MarkdownRenderer {
             visible_rect: None,
             image_max_width: Some(600.0),
             culled_count: 0,
+            cached_block_map: None,
+            block_y_offset: 0.0,
         }
     }
 
@@ -354,6 +578,7 @@ impl MarkdownRenderer {
         self.image_pending.clear();
         self.mermaid_failed.clear();
         self.mermaid_pending.clear();
+        self.cached_block_map = None;
     }
 
     /// Insert an image into the cache with LRU eviction (O(1) operations using IndexMap)
@@ -731,44 +956,92 @@ impl MarkdownRenderer {
         // Set image max width from config
         self.image_max_width = config.layout.image_width;
 
-        // Build annotation index once for O(log n) lookups instead of O(n) per paragraph
-        let annotation_index = AnnotationIndex::new(annotations);
+        // Build annotation index only when there are annotations (skip for empty stores)
+        let annotation_index = if annotations.is_empty() {
+            None
+        } else {
+            Some(AnnotationIndex::new(annotations))
+        };
+        // Empty index for passing to methods that require a reference
+        let empty_index = AnnotationIndex { sorted_annotations: Vec::new() };
+        let ann_index_ref = annotation_index.as_ref().unwrap_or(&empty_index);
 
         let base_font_size = config.theme.fonts.size;
         let spacing = &config.theme.spacing;
 
-        for event in events {
-            match event {
-                // Handle footnote definitions before generic Start/End tags
-                Event::Start(Tag::FootnoteDefinition(name)) => {
-                    self.in_footnote_definition = true;
-                    self.current_footnote = Some(name.to_string());
-                }
-                Event::End(TagEnd::FootnoteDefinition) => {
-                    if let Some(name) = self.current_footnote.take() {
-                        let text = std::mem::take(&mut self.text_buffer);
-                        self.footnote_definitions.push((name, text));
+        // Compute or reuse block map for event-level viewport culling
+        let events_id = events.as_ptr() as usize;
+        let available_width = ui.available_width();
+        let block_map = match &self.cached_block_map {
+            Some((id, blocks)) if *id == events_id => blocks.clone(),
+            _ => {
+                let blocks = compute_block_map(events, available_width);
+                self.cached_block_map = Some((events_id, blocks.clone()));
+                blocks
+            }
+        };
+
+        // Use block-level culling: skip entire blocks that are off-screen
+        let visible_rect = self.visible_rect;
+        let buffer = visible_rect.map(|r| r.height() * 2.0).unwrap_or(2000.0);
+        let viewport_top = visible_rect.map(|r| r.top()).unwrap_or(0.0);
+        let viewport_bottom = visible_rect.map(|r| r.bottom()).unwrap_or(f32::MAX);
+
+        for block in &block_map {
+            let cursor_y = ui.cursor().top();
+
+            // Check if this block is far below the viewport - we can skip it
+            // by allocating estimated space without processing events
+            let is_above_viewport = cursor_y + block.estimated_height < viewport_top - buffer;
+            let is_below_viewport = cursor_y > viewport_bottom + buffer;
+
+            // Special cases: always process headings (for TOC positions) and footnote definitions
+            let must_process = block.is_heading || matches!(events.get(block.event_start), Some(Event::Start(Tag::FootnoteDefinition(_))));
+
+            if !must_process && (is_above_viewport || is_below_viewport) {
+                // Skip this entire block - allocate estimated space and advance char_offset
+                let w = ui.available_width();
+                ui.allocate_space(Vec2::new(w, block.estimated_height));
+                self.char_offset += block.text_byte_len;
+                self.culled_count += 1;
+
+                // Still need to count headings for heading_index tracking even when culled
+                // (headings are always processed via must_process, so this handles
+                // any edge case with nested headings in blockquotes etc.)
+                continue;
+            }
+
+            // Process all events in this block normally
+            for event in &events[block.event_start..block.event_end] {
+                match event {
+                    Event::Start(Tag::FootnoteDefinition(name)) => {
+                        self.in_footnote_definition = true;
+                        self.current_footnote = Some(name.to_string());
                     }
-                    self.in_footnote_definition = false;
+                    Event::End(TagEnd::FootnoteDefinition) => {
+                        if let Some(name) = self.current_footnote.take() {
+                            let text = std::mem::take(&mut self.text_buffer);
+                            self.footnote_definitions.push((name, text));
+                        }
+                        self.in_footnote_definition = false;
+                    }
+                    Event::Start(tag) => self.handle_start_tag(tag, ui, heading_positions),
+                    Event::End(tag) => self.handle_end_tag(tag, ui, base_font_size, spacing, config, ann_index_ref),
+                    Event::Text(text) => self.handle_text(text),
+                    Event::Code(code) => self.handle_inline_code(code),
+                    Event::SoftBreak => self.text_buffer.push(' '),
+                    Event::HardBreak => self.text_buffer.push('\n'),
+                    Event::Rule => self.render_horizontal_rule(ui),
+                    Event::TaskListMarker(checked) => self.task_list_marker = Some(*checked),
+                    Event::FootnoteReference(name) => {
+                        let num = {
+                            let next_num = self.footnote_counter.len() + 1;
+                            *self.footnote_counter.entry(name.to_string()).or_insert(next_num)
+                        };
+                        self.text_buffer.push_str(&format!("\x01FN:{}:{}\x01", name, num));
+                    }
+                    _ => {}
                 }
-                Event::Start(tag) => self.handle_start_tag(tag, ui, heading_positions),
-                Event::End(tag) => self.handle_end_tag(tag, ui, base_font_size, spacing, config, &annotation_index),
-                Event::Text(text) => self.handle_text(text),
-                Event::Code(code) => self.handle_inline_code(code),
-                Event::SoftBreak => self.text_buffer.push(' '),
-                Event::HardBreak => self.text_buffer.push('\n'),
-                Event::Rule => self.render_horizontal_rule(ui),
-                Event::TaskListMarker(checked) => self.task_list_marker = Some(*checked),
-                Event::FootnoteReference(name) => {
-                    // Assign a number to this footnote if not already assigned
-                    let num = {
-                        let next_num = self.footnote_counter.len() + 1;
-                        *self.footnote_counter.entry(name.to_string()).or_insert(next_num)
-                    };
-                    // Insert a marker that we'll render as superscript
-                    self.text_buffer.push_str(&format!("\x01FN:{}:{}\x01", name, num));
-                }
-                _ => {}
             }
         }
 
@@ -808,6 +1081,7 @@ impl MarkdownRenderer {
         self.table_count = 0;
         self.code_block_count = 0;
         self.culled_count = 0;
+        self.block_y_offset = 0.0;
     }
 
     fn handle_start_tag(&mut self, tag: &Tag<'_>, ui: &mut Ui, heading_positions: &mut Vec<f32>) {
