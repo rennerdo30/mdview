@@ -48,6 +48,14 @@ impl TocColors {
     }
 }
 
+/// Check if a heading text matches the search query (case-insensitive substring)
+fn matches_search(text: &str, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    text.to_lowercase().contains(&query.to_lowercase())
+}
+
 /// TOC panel widget
 pub struct TocPanel {
     /// Collapsed state for each entry (by index)
@@ -64,6 +72,12 @@ pub struct TocPanel {
 
     /// Hash of collapsed state when cache was built
     collapsed_generation: u64,
+
+    /// Search/filter query text
+    search_query: String,
+
+    /// Whether to request focus on the search field next frame
+    request_search_focus: bool,
 }
 
 impl TocPanel {
@@ -74,6 +88,8 @@ impl TocPanel {
             has_focus: false,
             cached_visible_indices: None,
             collapsed_generation: 0,
+            search_query: String::new(),
+            request_search_focus: false,
         }
     }
 
@@ -109,6 +125,44 @@ impl TocPanel {
 
         let mut clicked = None;
 
+        // Render search input field
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_justify(true), |ui| {
+                let search_field = egui::TextEdit::singleline(&mut self.search_query)
+                    .hint_text("Filter...")
+                    .desired_width(ui.available_width() - 16.0)
+                    .font(egui::FontId::proportional(12.0))
+                    .margin(egui::Margin::symmetric(6.0, 4.0));
+                let response = ui.add(search_field);
+
+                if self.request_search_focus {
+                    response.request_focus();
+                    self.request_search_focus = false;
+                }
+
+                // If the search field has focus, don't let TOC panel steal keyboard events
+                if response.has_focus() {
+                    self.has_focus = false;
+                }
+            });
+            ui.add_space(8.0);
+        });
+        ui.add_space(4.0);
+
+        // Build set of matching entry indices for the current search query
+        let matching_indices: Option<Vec<bool>> = if self.search_query.is_empty() {
+            None // No filtering
+        } else {
+            let mut matches = vec![false; toc.len()];
+            for entry in &toc.flat {
+                if matches_search(&entry.text, &self.search_query) {
+                    matches[entry.index] = true;
+                }
+            }
+            Some(matches)
+        };
+
         // Get flat list of visible entry indices for keyboard navigation
         let visible_indices = self.get_visible_indices(toc);
 
@@ -143,7 +197,7 @@ impl TocPanel {
             .show(ui, |ui| {
                 ui.add_space(4.0);
                 for entry in &toc.entries {
-                    if let Some(idx) = self.render_entry(ui, entry, current_heading, self.focused_index, 0, &colors) {
+                    if let Some(idx) = self.render_entry(ui, entry, current_heading, self.focused_index, 0, &colors, matching_indices.as_deref()) {
                         clicked = Some(idx);
                         self.focused_index = Some(idx);
                     }
@@ -252,6 +306,8 @@ impl TocPanel {
 
     /// Render a single TOC entry and its children recursively
     /// Uses pre-computed colors to avoid per-entry color lookups
+    /// `matching_indices` is Some when filtering is active, None when no search is active
+    #[allow(clippy::too_many_arguments)]
     fn render_entry(
         &mut self,
         ui: &mut Ui,
@@ -260,7 +316,21 @@ impl TocPanel {
         focused_index: Option<usize>,
         depth: usize,
         colors: &TocColors,
+        matching_indices: Option<&[bool]>,
     ) -> Option<usize> {
+        // When filtering, check if this entry or any descendant matches
+        let is_match = matching_indices
+            .map(|m| m.get(entry.index).copied().unwrap_or(false))
+            .unwrap_or(true);
+        let has_matching_descendant = matching_indices
+            .map(|m| self.has_matching_descendant(entry, m))
+            .unwrap_or(false);
+
+        // If filtering and neither this entry nor any descendant matches, hide it entirely
+        if matching_indices.is_some() && !is_match && !has_matching_descendant {
+            return None;
+        }
+
         let mut clicked = None;
         let base_indent = 16.0;
         let indent = base_indent + (depth as f32 * 12.0);
@@ -269,6 +339,14 @@ impl TocPanel {
         let has_children = !entry.children.is_empty();
         // Look up collapsed state once (avoid 3 lookups per entry)
         let mut collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
+
+        // When filtering, force expand to show matching descendants
+        if matching_indices.is_some() && has_matching_descendant {
+            collapsed = false;
+        }
+
+        // Determine if this entry is dimmed (has a matching descendant but doesn't match itself)
+        let is_dimmed = matching_indices.is_some() && !is_match;
 
         // Calculate item height
         let item_height = 28.0;
@@ -282,7 +360,7 @@ impl TocPanel {
         let is_hovered = response.hovered();
 
         // Draw background for current/hovered/focused state
-        if is_current {
+        if is_current && !is_dimmed {
             // Active indicator line on the left
             let indicator_rect = egui::Rect::from_min_size(
                 rect.min,
@@ -329,12 +407,20 @@ impl TocPanel {
 
             let toggle_response = ui.interact(toggle_rect, ui.id().with(("toggle", entry.index)), egui::Sense::click());
 
+            let toggle_color = if is_dimmed {
+                colors.text_disabled
+            } else if toggle_response.hovered() {
+                colors.text_primary
+            } else {
+                colors.text_muted
+            };
+
             ui.painter().text(
                 toggle_pos,
                 egui::Align2::CENTER_CENTER,
                 toggle_text,
                 egui::FontId::proportional(11.0),
-                if toggle_response.hovered() { colors.text_primary } else { colors.text_muted },
+                toggle_color,
             );
 
             if toggle_response.clicked() {
@@ -345,8 +431,10 @@ impl TocPanel {
             }
         }
 
-        // Entry text
-        let text_color = if is_current {
+        // Entry text color - dimmed entries use disabled color
+        let text_color = if is_dimmed {
+            colors.text_disabled
+        } else if is_current {
             colors.accent
         } else if is_hovered {
             colors.text_primary
@@ -385,13 +473,26 @@ impl TocPanel {
         // Render children if not collapsed (uses cached collapsed value)
         if has_children && !collapsed {
             for child in &entry.children {
-                if let Some(idx) = self.render_entry(ui, child, current_heading, focused_index, depth + 1, colors) {
+                if let Some(idx) = self.render_entry(ui, child, current_heading, focused_index, depth + 1, colors, matching_indices) {
                     clicked = Some(idx);
                 }
             }
         }
 
         clicked
+    }
+
+    /// Check if any descendant of this entry matches the search
+    fn has_matching_descendant(&self, entry: &TocEntry, matches: &[bool]) -> bool {
+        for child in &entry.children {
+            if matches.get(child.index).copied().unwrap_or(false) {
+                return true;
+            }
+            if self.has_matching_descendant(child, matches) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Expand all entries
@@ -501,6 +602,21 @@ impl TocPanel {
     pub fn is_focused(&self) -> bool {
         self.has_focus
     }
+
+    /// Focus the search input field
+    pub fn focus_search(&mut self) {
+        self.request_search_focus = true;
+    }
+
+    /// Clear the search query
+    pub fn clear_search(&mut self) {
+        self.search_query.clear();
+    }
+
+    /// Get the current search query
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
 }
 
 #[cfg(test)]
@@ -513,6 +629,8 @@ mod tests {
         let panel = TocPanel::new();
         assert!(panel.collapsed.is_empty());
         assert!(panel.cached_visible_indices.is_none());
+        assert!(panel.search_query.is_empty());
+        assert!(!panel.request_search_focus);
     }
 
     #[test]
@@ -526,5 +644,30 @@ mod tests {
         assert!(result.len() < "this is a very long text".len());
         // Verify truncated text is owned
         assert!(matches!(result, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn test_matches_search() {
+        assert!(matches_search("Hello World", "hello"));
+        assert!(matches_search("Hello World", "WORLD"));
+        assert!(matches_search("Hello World", "lo wo"));
+        assert!(matches_search("Hello World", ""));
+        assert!(!matches_search("Hello World", "xyz"));
+    }
+
+    #[test]
+    fn test_focus_search() {
+        let mut panel = TocPanel::new();
+        assert!(!panel.request_search_focus);
+        panel.focus_search();
+        assert!(panel.request_search_focus);
+    }
+
+    #[test]
+    fn test_clear_search() {
+        let mut panel = TocPanel::new();
+        panel.search_query = "test query".to_string();
+        panel.clear_search();
+        assert!(panel.search_query.is_empty());
     }
 }

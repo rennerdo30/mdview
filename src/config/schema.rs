@@ -208,6 +208,7 @@ pub struct KeybindingsConfig {
     pub add_annotation: String,
     pub add_bookmark: String,
     pub toggle_file_browser: String,
+    pub focus_toc_search: String,
 }
 
 impl Default for KeybindingsConfig {
@@ -222,6 +223,7 @@ impl Default for KeybindingsConfig {
             add_annotation: "Ctrl+H".to_string(),
             add_bookmark: "Ctrl+B".to_string(),
             toggle_file_browser: "Ctrl+E".to_string(),
+            focus_toc_search: "Ctrl+F".to_string(),
         }
     }
 }

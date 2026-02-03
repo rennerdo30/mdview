@@ -28,6 +28,7 @@ struct CachedKeybindings {
     quit: Option<ParsedKeybinding>,
     add_annotation: Option<ParsedKeybinding>,
     add_bookmark: Option<ParsedKeybinding>,
+    focus_toc_search: Option<ParsedKeybinding>,
 }
 
 impl CachedKeybindings {
@@ -42,6 +43,7 @@ impl CachedKeybindings {
             quit: parse_keybinding(&config.quit),
             add_annotation: parse_keybinding(&config.add_annotation),
             add_bookmark: parse_keybinding(&config.add_bookmark),
+            focus_toc_search: parse_keybinding(&config.focus_toc_search),
         }
     }
 }
@@ -772,7 +774,7 @@ impl MdViewApp {
         let kb = &self.cached_keybindings;
 
         // Batch all keyboard input checks into a single ctx.input() call for efficiency
-        let (toggle_toc, export_pdf, reload, open_file, open_folder, toggle_file_browser, quit, add_annotation, add_bookmark, escape) = ctx.input(|i| {
+        let (toggle_toc, export_pdf, reload, open_file, open_folder, toggle_file_browser, quit, add_annotation, add_bookmark, focus_toc_search, escape) = ctx.input(|i| {
             let check = |parsed: &Option<ParsedKeybinding>| -> bool {
                 parsed.as_ref().is_some_and(|p| {
                     i.key_pressed(p.key) &&
@@ -791,6 +793,7 @@ impl MdViewApp {
                 check(&kb.quit),
                 check(&kb.add_annotation),
                 check(&kb.add_bookmark),
+                check(&kb.focus_toc_search),
                 i.key_pressed(Key::Escape),
             )
         });
@@ -855,10 +858,19 @@ impl MdViewApp {
             self.handle_annotation_action(AnnotationAction::CreateBookmark(char_offset));
         }
 
+        if focus_toc_search {
+            // Ensure TOC is visible and focus the search field
+            if !self.state.toc_visible() {
+                self.state.set_toc_visible(true);
+            }
+            self.toc_panel.focus_search();
+        }
+
         if escape {
             self.state.creating_annotation = false;
             self.state.text_selection = None;
             self.annotation_popup.hide();
+            self.toc_panel.clear_search();
         }
     }
 
