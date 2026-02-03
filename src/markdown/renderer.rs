@@ -145,20 +145,36 @@ struct ContentBlock {
     event_start: usize,
     /// End index in the events slice (exclusive)
     event_end: usize,
-    /// Estimated height of this block in pixels
+    /// Estimated height of this block in pixels (used when actual_height is unknown)
     estimated_height: f32,
+    /// Actual rendered height measured after a real render pass.
+    /// Once set, this is used instead of estimated_height for more accurate culling.
+    actual_height: Option<f32>,
     /// Whether this block contains a heading (needed for TOC position tracking)
     is_heading: bool,
     /// Number of text bytes in this block (for char_offset tracking)
     text_byte_len: usize,
+    /// The heading index within this block (for scroll-to-heading targeting)
+    heading_index: Option<usize>,
+}
+
+impl ContentBlock {
+    /// Returns the best known height for this block (actual if measured, estimated otherwise)
+    fn height(&self) -> f32 {
+        self.actual_height.unwrap_or(self.estimated_height)
+    }
 }
 
 /// Pre-compute block boundaries from a pulldown-cmark event stream.
 /// This allows the renderer to skip entire blocks that are off-screen without
 /// processing any of their events through the state machine.
+///
+/// Each heading block is assigned a `heading_index` so the renderer can force-render
+/// blocks containing the scroll target heading (for TOC jump navigation).
 fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentBlock> {
     let mut blocks = Vec::new();
     let mut i = 0;
+    let mut heading_counter = 0usize;
     let chars_per_line = (available_width / ESTIMATED_CHAR_WIDTH).max(1.0);
 
     while i < events.len() {
@@ -182,13 +198,17 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     event_start: start,
                     event_end: i,
                     estimated_height: height,
+                    actual_height: None,
                     is_heading: false,
                     text_byte_len: text_len,
+                    heading_index: None,
                 });
             }
             Event::Start(Tag::Heading { .. }) => {
                 let start = i;
                 let mut text_len = 0usize;
+                let h_idx = heading_counter;
+                heading_counter += 1;
                 i += 1;
                 while i < events.len() {
                     match &events[i] {
@@ -202,8 +222,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     event_start: start,
                     event_end: i,
                     estimated_height: height,
+                    actual_height: None,
                     is_heading: true,
                     text_byte_len: text_len,
+                    heading_index: Some(h_idx),
                 });
             }
             Event::Start(Tag::CodeBlock(_)) => {
@@ -227,8 +249,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     event_start: start,
                     event_end: i,
                     estimated_height: height,
+                    actual_height: None,
                     is_heading: false,
                     text_byte_len: text_len,
+                    heading_index: None,
                 });
             }
             Event::Start(Tag::BlockQuote(_)) => {
@@ -251,8 +275,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     event_start: start,
                     event_end: i,
                     estimated_height: height,
+                    actual_height: None,
                     is_heading: false,
                     text_byte_len: text_len,
+                    heading_index: None,
                 });
             }
             Event::Start(Tag::List(_)) => {
@@ -277,8 +303,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     event_start: start,
                     event_end: i,
                     estimated_height: height,
+                    actual_height: None,
                     is_heading: false,
                     text_byte_len: text_len,
+                    heading_index: None,
                 });
             }
             Event::Start(Tag::Table(_)) => {
@@ -302,8 +330,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     event_start: start,
                     event_end: i,
                     estimated_height: height,
+                    actual_height: None,
                     is_heading: false,
                     text_byte_len: text_len,
+                    heading_index: None,
                 });
             }
             Event::Start(Tag::FootnoteDefinition(_)) => {
@@ -322,8 +352,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     event_start: start,
                     event_end: i,
                     estimated_height: 0.0, // footnotes rendered at end, height doesn't matter for culling
+                    actual_height: None,
                     is_heading: false,
                     text_byte_len: text_len,
+                    heading_index: None,
                 });
             }
             Event::Rule => {
@@ -331,8 +363,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     event_start: i,
                     event_end: i + 1,
                     estimated_height: 20.0,
+                    actual_height: None,
                     is_heading: false,
                     text_byte_len: 0,
+                    heading_index: None,
                 });
                 i += 1;
             }
@@ -471,8 +505,9 @@ pub struct MarkdownRenderer {
     culled_count: usize,
 
     /// Cached block map for event-level viewport culling
-    /// Invalidated when the events slice pointer changes
-    cached_block_map: Option<(usize, Vec<ContentBlock>)>,
+    /// Invalidated when the events slice pointer or available width changes
+    /// Tuple: (events_ptr, available_width_rounded, blocks)
+    cached_block_map: Option<(usize, u32, Vec<ContentBlock>)>,
 
     /// Running Y offset accumulator for block-level culling
     /// Tracks estimated cumulative height as blocks are skipped/rendered
@@ -969,16 +1004,16 @@ impl MarkdownRenderer {
         let base_font_size = config.theme.fonts.size;
         let spacing = &config.theme.spacing;
 
-        // Compute or reuse block map for event-level viewport culling
+        // Compute or reuse block map for event-level viewport culling.
+        // Invalidate when events change OR available width changes significantly
+        // (width changes affect height estimates for text wrapping).
         let events_id = events.as_ptr() as usize;
         let available_width = ui.available_width();
-        let block_map = match &self.cached_block_map {
-            Some((id, blocks)) if *id == events_id => blocks.clone(),
-            _ => {
-                let blocks = compute_block_map(events, available_width);
-                self.cached_block_map = Some((events_id, blocks.clone()));
-                blocks
-            }
+        // Round width to nearest 10px to avoid thrashing on subpixel changes
+        let width_key = (available_width / 10.0) as u32;
+        let mut block_map = match self.cached_block_map.take() {
+            Some((id, w, blocks)) if id == events_id && w == width_key => blocks,
+            _ => compute_block_map(events, available_width),
         };
 
         // Use block-level culling: skip entire blocks that are off-screen
@@ -987,29 +1022,40 @@ impl MarkdownRenderer {
         let viewport_top = visible_rect.map(|r| r.top()).unwrap_or(0.0);
         let viewport_bottom = visible_rect.map(|r| r.bottom()).unwrap_or(f32::MAX);
 
-        for block in &block_map {
+        // When a scroll target is active, find the block containing that heading
+        // so we can force-render it even if it appears off-screen
+        let scroll_target_block_idx = self.scroll_target.and_then(|target_heading| {
+            block_map.iter().position(|b| b.heading_index == Some(target_heading))
+        });
+
+        for (block_idx, block) in block_map.iter_mut().enumerate() {
             let cursor_y = ui.cursor().top();
 
-            // Check if this block is far below the viewport - we can skip it
-            // by allocating estimated space without processing events
-            let is_above_viewport = cursor_y + block.estimated_height < viewport_top - buffer;
+            // Use actual measured height when available, otherwise estimated
+            let block_height = block.height();
+
+            // Check if this block is far outside the viewport
+            let is_above_viewport = cursor_y + block_height < viewport_top - buffer;
             let is_below_viewport = cursor_y > viewport_bottom + buffer;
 
-            // Special cases: always process headings (for TOC positions) and footnote definitions
-            let must_process = block.is_heading || matches!(events.get(block.event_start), Some(Event::Start(Tag::FootnoteDefinition(_))));
+            // Special cases: always process headings (for TOC positions), footnote definitions,
+            // and the block containing a scroll target heading
+            let is_scroll_target_block = scroll_target_block_idx == Some(block_idx);
+            let must_process = block.is_heading
+                || is_scroll_target_block
+                || matches!(events.get(block.event_start), Some(Event::Start(Tag::FootnoteDefinition(_))));
 
             if !must_process && (is_above_viewport || is_below_viewport) {
-                // Skip this entire block - allocate estimated space and advance char_offset
+                // Skip this entire block - allocate space and advance char_offset
                 let w = ui.available_width();
-                ui.allocate_space(Vec2::new(w, block.estimated_height));
+                ui.allocate_space(Vec2::new(w, block_height));
                 self.char_offset += block.text_byte_len;
                 self.culled_count += 1;
-
-                // Still need to count headings for heading_index tracking even when culled
-                // (headings are always processed via must_process, so this handles
-                // any edge case with nested headings in blockquotes etc.)
                 continue;
             }
+
+            // Record cursor position before rendering this block for height measurement
+            let pre_render_y = ui.cursor().top();
 
             // Process all events in this block normally
             for event in &events[block.event_start..block.event_end] {
@@ -1043,7 +1089,19 @@ impl MarkdownRenderer {
                     _ => {}
                 }
             }
+
+            // Measure actual rendered height and store for future frames.
+            // This improves scroll accuracy on subsequent renders since we replace
+            // rough estimates with precise measurements.
+            let post_render_y = ui.cursor().top();
+            let measured = post_render_y - pre_render_y;
+            if measured > 0.0 {
+                block.actual_height = Some(measured);
+            }
         }
+
+        // Store the block map back with updated actual heights
+        self.cached_block_map = Some((events_id, width_key, block_map));
 
         // Render footnote definitions at the end if any exist
         if !self.footnote_definitions.is_empty() {
@@ -2914,5 +2972,181 @@ fn extract_node_text(line: &str) -> String {
         node_id
     } else {
         line.chars().take(20).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pulldown_cmark::{Parser, Options};
+
+    /// Helper: parse markdown to owned events
+    fn parse_events(markdown: &str) -> Vec<Event<'static>> {
+        let parser = Parser::new_ext(markdown, Options::all());
+        parser.map(|e| e.into_static()).collect()
+    }
+
+    #[test]
+    fn test_content_block_height_uses_actual_when_available() {
+        let block = ContentBlock {
+            event_start: 0,
+            event_end: 1,
+            estimated_height: 40.0,
+            actual_height: None,
+            is_heading: false,
+            text_byte_len: 10,
+            heading_index: None,
+        };
+        assert_eq!(block.height(), 40.0, "should use estimated when actual is None");
+
+        let block_with_actual = ContentBlock {
+            actual_height: Some(55.0),
+            ..block
+        };
+        assert_eq!(block_with_actual.height(), 55.0, "should use actual when available");
+    }
+
+    #[test]
+    fn test_compute_block_map_paragraph() {
+        let md = "Hello world, this is a paragraph.\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        assert_eq!(blocks.len(), 1);
+        assert!(!blocks[0].is_heading);
+        assert!(blocks[0].heading_index.is_none());
+        assert!(blocks[0].estimated_height > 0.0);
+        assert!(blocks[0].text_byte_len > 0);
+        assert!(blocks[0].actual_height.is_none());
+    }
+
+    #[test]
+    fn test_compute_block_map_heading_tracking() {
+        let md = "# First\n\nSome text\n\n## Second\n\nMore text\n\n### Third\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        // Should have: heading, paragraph, heading, paragraph, heading
+        let headings: Vec<_> = blocks.iter().filter(|b| b.is_heading).collect();
+        assert_eq!(headings.len(), 3);
+
+        // Heading indices should be sequential
+        assert_eq!(headings[0].heading_index, Some(0));
+        assert_eq!(headings[1].heading_index, Some(1));
+        assert_eq!(headings[2].heading_index, Some(2));
+    }
+
+    #[test]
+    fn test_compute_block_map_code_block() {
+        let md = "```rust\nfn main() {\n    println!(\"hello\");\n}\n```\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        assert_eq!(blocks.len(), 1);
+        assert!(!blocks[0].is_heading);
+        assert!(blocks[0].estimated_height > 0.0);
+    }
+
+    #[test]
+    fn test_compute_block_map_list() {
+        let md = "- item one\n- item two\n- item three\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        assert_eq!(blocks.len(), 1);
+        // List height should account for items
+        assert!(blocks[0].estimated_height >= ESTIMATED_LINE_HEIGHT * 3.0);
+    }
+
+    #[test]
+    fn test_compute_block_map_table() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        assert_eq!(blocks.len(), 1);
+        // Table with header + 2 rows
+        assert!(blocks[0].estimated_height > 0.0);
+    }
+
+    #[test]
+    fn test_compute_block_map_blockquote() {
+        let md = "> This is a quote\n> with multiple lines\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].estimated_height > 0.0);
+    }
+
+    #[test]
+    fn test_compute_block_map_horizontal_rule() {
+        let md = "---\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].estimated_height, 20.0);
+        assert_eq!(blocks[0].text_byte_len, 0);
+    }
+
+    #[test]
+    fn test_compute_block_map_mixed_content() {
+        let md = "# Title\n\nParagraph one.\n\n- item\n\n## Subtitle\n\n> quote\n\n---\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        // heading, paragraph, list, heading, blockquote, rule
+        assert_eq!(blocks.len(), 6);
+
+        // First and fourth blocks should be headings
+        assert!(blocks[0].is_heading);
+        assert_eq!(blocks[0].heading_index, Some(0));
+        assert!(blocks[3].is_heading);
+        assert_eq!(blocks[3].heading_index, Some(1));
+    }
+
+    #[test]
+    fn test_compute_block_map_width_affects_height_estimation() {
+        let md = "This is a long paragraph that should wrap differently at different widths. It contains enough text to demonstrate that width changes affect the estimated height calculation.\n";
+        let events = parse_events(md);
+
+        let blocks_wide = compute_block_map(&events, 800.0);
+        let blocks_narrow = compute_block_map(&events, 200.0);
+
+        // Narrower width should produce taller estimated height
+        assert!(blocks_narrow[0].estimated_height > blocks_wide[0].estimated_height);
+    }
+
+    #[test]
+    fn test_compute_block_map_empty_document() {
+        let events: Vec<Event<'static>> = Vec::new();
+        let blocks = compute_block_map(&events, 800.0);
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn test_compute_block_map_preserves_event_ranges() {
+        let md = "# Hello\n\nWorld\n";
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        // All events should be covered by blocks (no gaps)
+        let total_events_in_blocks: usize = blocks.iter()
+            .map(|b| b.event_end - b.event_start)
+            .sum();
+
+        // Each block's range should be valid
+        for block in &blocks {
+            assert!(block.event_start < block.event_end);
+            assert!(block.event_end <= events.len());
+        }
+
+        // Blocks should not overlap
+        for pair in blocks.windows(2) {
+            assert!(pair[0].event_end <= pair[1].event_start);
+        }
+
+        assert!(total_events_in_blocks > 0);
     }
 }
