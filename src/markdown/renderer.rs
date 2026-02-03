@@ -683,14 +683,18 @@ impl MarkdownRenderer {
         code: &str,
         language: Option<&str>,
         theme_name: &str,
+        is_dark: bool,
+        show_line_numbers: bool,
     ) -> Option<egui::text::LayoutJob> {
-        // Generate cache key from code hash + language + theme
+        // Generate cache key from code hash + language + theme + dark mode + line numbers
         let cache_key = {
             use sha2::{Sha256, Digest};
             let mut hasher = Sha256::new();
             hasher.update(code.as_bytes());
             hasher.update(language.unwrap_or("").as_bytes());
             hasher.update(theme_name.as_bytes());
+            hasher.update(if is_dark { "dark" } else { "light" });
+            hasher.update(if show_line_numbers { "ln" } else { "" });
             hex::encode(&hasher.finalize()[..12])
         };
 
@@ -703,7 +707,7 @@ impl MarkdownRenderer {
         }
 
         // Cache miss - compute syntax highlighting
-        let job = highlight_code(code, language, theme_name)?;
+        let job = highlight_code(code, language, theme_name, is_dark, show_line_numbers)?;
 
         // Cache with LRU eviction (O(1) operations)
         while self.syntax_cache.len() >= SYNTAX_CACHE_MAX_SIZE {
@@ -1617,18 +1621,23 @@ impl MarkdownRenderer {
         let cursor_y = ui.cursor().top();
         let is_visible = self.is_position_visible(cursor_y);
 
+        let show_line_numbers = config.markdown.show_line_numbers;
+
         // Try syntax highlighting with caching - only if visible or already cached
         #[cfg(feature = "syntax-highlighting")]
         let highlighted_job = if config.markdown.syntax_highlighting && is_visible {
-            self.get_highlighted_code(&code, lang_label.as_deref(), &config.markdown.syntax_theme)
+            self.get_highlighted_code(&code, lang_label.as_deref(), &config.markdown.syntax_theme, is_dark, show_line_numbers)
         } else if config.markdown.syntax_highlighting {
             // Check cache without computing - if already cached, use it
             let cache_key = {
                 use sha2::{Sha256, Digest};
                 let mut hasher = Sha256::new();
                 hasher.update(code.as_bytes());
-                let lang = lang_label.as_deref().unwrap_or("text");
-                format!("{}:{}:{}", &hex::encode(&hasher.finalize()[..8]), lang, &config.markdown.syntax_theme)
+                hasher.update(lang_label.as_deref().unwrap_or("").as_bytes());
+                hasher.update(config.markdown.syntax_theme.as_bytes());
+                hasher.update(if is_dark { "dark" } else { "light" });
+                hasher.update(if show_line_numbers { "ln" } else { "" });
+                hex::encode(&hasher.finalize()[..12])
             };
             self.syntax_cache.get(&cache_key).cloned()
         } else {
@@ -1663,13 +1672,29 @@ impl MarkdownRenderer {
                     rendered = true;
                 }
 
-                // Fallback: plain monospace text
+                // Fallback: plain monospace text (with optional line numbers)
                 if !rendered {
-                    ui.label(
-                        RichText::new(&code)
-                            .monospace()
-                            .color(theme_colors::inline_code_text(is_dark)),
-                    );
+                    if show_line_numbers {
+                        let lines: Vec<&str> = code.lines().collect();
+                        let line_count = lines.len();
+                        let digits = if line_count == 0 { 1 } else { (line_count as f32).log10().floor() as usize + 1 };
+                        let mut numbered = String::with_capacity(code.len() + line_count * (digits + 3));
+                        for (i, line) in lines.iter().enumerate() {
+                            use std::fmt::Write;
+                            let _ = writeln!(numbered, "{:>width$}  {}", i + 1, line, width = digits);
+                        }
+                        ui.label(
+                            RichText::new(&numbered)
+                                .monospace()
+                                .color(theme_colors::inline_code_text(is_dark)),
+                        );
+                    } else {
+                        ui.label(
+                            RichText::new(&code)
+                                .monospace()
+                                .color(theme_colors::inline_code_text(is_dark)),
+                        );
+                    }
                 }
             });
 
@@ -2774,7 +2799,20 @@ impl Default for MarkdownRenderer {
 }
 
 #[cfg(feature = "syntax-highlighting")]
-fn highlight_code(code: &str, language: Option<&str>, theme_name: &str) -> Option<egui::text::LayoutJob> {
+fn resolve_syntect_theme_name(theme_name: &str, is_dark: bool) -> &str {
+    if theme_name == "auto" {
+        if is_dark {
+            "base16-ocean.dark"
+        } else {
+            "base16-ocean.light"
+        }
+    } else {
+        theme_name
+    }
+}
+
+#[cfg(feature = "syntax-highlighting")]
+fn highlight_code(code: &str, language: Option<&str>, theme_name: &str, is_dark: bool, show_line_numbers: bool) -> Option<egui::text::LayoutJob> {
     use syntect::highlighting::ThemeSet;
     use syntect::parsing::SyntaxSet;
     use syntect::easy::HighlightLines;
@@ -2792,8 +2830,11 @@ fn highlight_code(code: &str, language: Option<&str>, theme_name: &str) -> Optio
         .and_then(|lang| ss.find_syntax_by_token(lang))
         .unwrap_or_else(|| ss.find_syntax_plain_text());
 
+    // Resolve theme name (handle "auto" for theme-aware selection)
+    let resolved_theme = resolve_syntect_theme_name(theme_name, is_dark);
+
     // Use theme from config, falling back to base16-ocean.dark or any available theme
-    let theme = ts.themes.get(theme_name)
+    let theme = ts.themes.get(resolved_theme)
         .or_else(|| ts.themes.get("base16-ocean.dark"))
         .or_else(|| ts.themes.values().next())?;
     let mut highlighter = HighlightLines::new(syntax, theme);
@@ -2801,7 +2842,32 @@ fn highlight_code(code: &str, language: Option<&str>, theme_name: &str) -> Optio
     let mut job = egui::text::LayoutJob::default();
     let mono_font = egui::FontId::monospace(13.0);
 
-    for line in code.lines() {
+    let line_number_color = theme_colors::code_line_number(is_dark);
+    let lines: Vec<&str> = code.lines().collect();
+    let line_count = lines.len();
+    // Calculate width for line number gutter (digits needed + padding)
+    let line_num_width = if show_line_numbers {
+        let digits = if line_count == 0 { 1 } else { (line_count as f32).log10().floor() as usize + 1 };
+        digits + 2 // extra space for padding
+    } else {
+        0
+    };
+
+    for (i, line) in lines.iter().enumerate() {
+        // Add line number if enabled
+        if show_line_numbers {
+            let line_num = format!("{:>width$}  ", i + 1, width = line_num_width - 2);
+            job.append(
+                &line_num,
+                0.0,
+                egui::TextFormat {
+                    font_id: mono_font.clone(),
+                    color: line_number_color,
+                    ..Default::default()
+                },
+            );
+        }
+
         let Ok(ranges) = highlighter.highlight_line(line, ss) else {
             return None;
         };
@@ -2844,7 +2910,7 @@ fn syntect_color_to_egui(style: syntect::highlighting::Style) -> Color32 {
 }
 
 #[cfg(not(feature = "syntax-highlighting"))]
-fn highlight_code(_code: &str, _language: Option<&str>, _theme_name: &str) -> Option<egui::text::LayoutJob> {
+fn highlight_code(_code: &str, _language: Option<&str>, _theme_name: &str, _is_dark: bool, _show_line_numbers: bool) -> Option<egui::text::LayoutJob> {
     None
 }
 

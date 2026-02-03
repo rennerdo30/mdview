@@ -125,8 +125,11 @@ pub struct MarkdownConfig {
     /// Enable syntax highlighting for code blocks
     pub syntax_highlighting: bool,
 
-    /// Syntax highlighting theme
+    /// Syntax highlighting theme (use "auto" for theme-aware selection)
     pub syntax_theme: String,
+
+    /// Show line numbers in code blocks
+    pub show_line_numbers: bool,
 }
 
 impl Default for MarkdownConfig {
@@ -138,7 +141,8 @@ impl Default for MarkdownConfig {
             footnotes: true,
             smart_punctuation: false,
             syntax_highlighting: true,
-            syntax_theme: "base16-ocean.dark".to_string(),
+            syntax_theme: "auto".to_string(),
+            show_line_numbers: false,
         }
     }
 }
