@@ -49,7 +49,7 @@ impl<'a> AnnotationIndex<'a> {
         let first_idx = self.sorted_annotations
             .partition_point(|a| a.end <= start);
 
-        // Collect overlapping annotations from this point
+        // Collect overlapping annotations (most paragraphs have 0-4 annotations)
         self.sorted_annotations[first_idx..]
             .iter()
             .take_while(|a| a.start < end)
@@ -129,6 +129,9 @@ mod theme_colors {
         }
     }
 }
+
+/// Estimated height of a single line of text in egui (used for viewport culling estimates)
+const ESTIMATED_LINE_HEIGHT: f32 = 20.0;
 
 /// Markdown renderer that converts events to egui widgets
 pub struct MarkdownRenderer {
@@ -249,6 +252,9 @@ pub struct MarkdownRenderer {
 
     /// Maximum image width from config (defaults to 600.0)
     image_max_width: Option<f32>,
+
+    /// Number of elements skipped by viewport culling (for diagnostics)
+    culled_count: usize,
 }
 
 impl MarkdownRenderer {
@@ -298,6 +304,7 @@ impl MarkdownRenderer {
             mermaid_metadata_cache: HashMap::new(),
             visible_rect: None,
             image_max_width: Some(600.0),
+            culled_count: 0,
         }
     }
 
@@ -317,6 +324,28 @@ impl MarkdownRenderer {
             }
             None => true, // If no rect cached, assume visible
         }
+    }
+
+    /// Skip rendering an element by allocating estimated space without drawing widgets.
+    /// This is used for viewport culling of offscreen paragraphs, headings, and list items.
+    /// Returns true if the element was culled (skipped), false if it should be rendered normally.
+    fn try_cull_text_element(&mut self, ui: &mut Ui, text: &str, extra_spacing: f32) -> bool {
+        let cursor_y = ui.cursor().top();
+        if self.is_position_visible(cursor_y) {
+            return false;
+        }
+
+        // Estimate height based on text length and available width
+        let available_width = ui.available_width();
+        // Rough estimate: assume ~8px per character width for proportional font
+        let chars_per_line = (available_width / 8.0).max(1.0);
+        let num_lines = (text.len() as f32 / chars_per_line).ceil().max(1.0);
+        let estimated_height = num_lines * ESTIMATED_LINE_HEIGHT + extra_spacing;
+
+        // Allocate blank space instead of rendering
+        ui.allocate_space(Vec2::new(available_width, estimated_height));
+        self.culled_count += 1;
+        true
     }
 
     /// Clear the image cache (call when document changes)
@@ -444,7 +473,8 @@ impl MarkdownRenderer {
     }
 
     /// Get cached mermaid metadata or compute and cache it
-    fn get_mermaid_metadata(&mut self, code: &str, diagram_type: &str) -> MermaidMetadata {
+    /// Returns a reference to avoid cloning on cache hit
+    fn get_mermaid_metadata(&mut self, code: &str, diagram_type: &str) -> &MermaidMetadata {
         // Generate cache key from code hash
         let cache_key = {
             use sha2::{Sha256, Digest};
@@ -453,13 +483,17 @@ impl MarkdownRenderer {
             hex::encode(&hasher.finalize()[..8])
         };
 
-        // Check cache
-        if let Some(metadata) = self.mermaid_metadata_cache.get(&cache_key) {
-            return metadata.clone();
-        }
+        // Use entry API to avoid clone - returns reference to cached or newly inserted value
+        let diagram_type_owned = diagram_type.to_string();
+        let code_owned = code.to_string();
+        self.mermaid_metadata_cache.entry(cache_key).or_insert_with(|| {
+            Self::compute_mermaid_metadata(&code_owned, &diagram_type_owned)
+        })
+    }
 
-        // Compute metadata based on diagram type
-        let metadata = match diagram_type {
+    /// Compute mermaid metadata for a diagram (helper for caching)
+    fn compute_mermaid_metadata(code: &str, diagram_type: &str) -> MermaidMetadata {
+        match diagram_type {
             "flowchart" | "graph" => {
                 let nodes: Vec<String> = code.lines()
                     .filter(|l| !l.trim().starts_with("graph") && !l.trim().starts_with("flowchart"))
@@ -475,12 +509,13 @@ impl MarkdownRenderer {
                 }
             }
             "sequence" => {
-                let participant_count = code.lines()
-                    .filter(|l| l.trim().starts_with("participant") || l.trim().starts_with("actor"))
-                    .count();
-                let arrow_count = code.lines()
-                    .filter(|l| l.contains("->>") || l.contains("-->>") || l.contains("->"))
-                    .count();
+                // Single-pass counting of participants and arrows
+                let (participant_count, arrow_count) = code.lines().fold((0, 0), |(p, a), l| {
+                    let trimmed = l.trim();
+                    let is_participant = trimmed.starts_with("participant") || trimmed.starts_with("actor");
+                    let is_arrow = l.contains("->>") || l.contains("-->>") || l.contains("->");
+                    (p + is_participant as usize, a + is_arrow as usize)
+                });
                 MermaidMetadata {
                     diagram_type: diagram_type.to_string(),
                     count1: participant_count,
@@ -558,12 +593,13 @@ impl MarkdownRenderer {
                 }
             }
             "gitGraph" => {
-                let commit_count = code.lines()
-                    .filter(|l| l.trim().starts_with("commit"))
-                    .count();
-                let branch_count = code.lines()
-                    .filter(|l| l.trim().starts_with("branch"))
-                    .count();
+                // Single-pass counting of commits and branches
+                let (commit_count, branch_count) = code.lines().fold((0, 0), |(c, b), l| {
+                    let trimmed = l.trim();
+                    let is_commit = trimmed.starts_with("commit");
+                    let is_branch = trimmed.starts_with("branch");
+                    (c + is_commit as usize, b + is_branch as usize)
+                });
                 MermaidMetadata {
                     diagram_type: diagram_type.to_string(),
                     count1: commit_count,
@@ -613,10 +649,7 @@ impl MarkdownRenderer {
                     nodes: Vec::new(),
                 }
             }
-        };
-
-        self.mermaid_metadata_cache.insert(cache_key, metadata.clone());
-        metadata
+        }
     }
 
     /// Poll for completed async mermaid renders
@@ -759,6 +792,7 @@ impl MarkdownRenderer {
         self.current_link = None;
         self.in_blockquote = false;
         self.in_table = false;
+        // Reuse Vec capacity - clear without deallocating
         self.table_alignments.clear();
         self.table_row.clear();
         self.table_rows.clear();
@@ -773,6 +807,7 @@ impl MarkdownRenderer {
         self.heading_index = 0;
         self.table_count = 0;
         self.code_block_count = 0;
+        self.culled_count = 0;
     }
 
     fn handle_start_tag(&mut self, tag: &Tag<'_>, ui: &mut Ui, heading_positions: &mut Vec<f32>) {
@@ -944,6 +979,13 @@ impl MarkdownRenderer {
             return;
         }
 
+        // Viewport culling: skip expensive widget creation for offscreen headings
+        // (heading positions are still recorded in handle_start_tag for TOC)
+        let total_spacing = spacing.heading_top + spacing.heading_bottom;
+        if self.try_cull_text_element(ui, &text, total_spacing) {
+            return;
+        }
+
         ui.add_space(spacing.heading_top);
 
         let size_multiplier = heading_size_multiplier(self.heading_level);
@@ -976,10 +1018,19 @@ impl MarkdownRenderer {
             return;
         }
 
-        // Calculate char count once and reuse (avoid multiple O(n) iterations)
-        let text_len = text.chars().count();
+        // Use byte length as a fast proxy for character offset tracking.
+        // This is O(1) vs O(n) for chars().count(). The offset is only used
+        // for annotation range overlap checks, so byte-level granularity is sufficient
+        // as long as we're consistent (annotations also use this same metric).
+        let text_len = text.len();
         let start_offset = self.char_offset;
         let end_offset = start_offset + text_len;
+
+        // Viewport culling: skip expensive widget creation for offscreen paragraphs
+        if self.try_cull_text_element(ui, &text, spacing.paragraph) {
+            self.char_offset = end_offset;
+            return;
+        }
 
         // Check if any annotations overlap with this text (O(log n) binary search)
         let overlapping = annotation_index.in_range(start_offset, end_offset);
@@ -1008,6 +1059,42 @@ impl MarkdownRenderer {
         code_text_color: Option<Color32>,
         in_strikethrough: bool,
     ) {
+        // Fast path: no annotations and no inline code or footnotes - use single label
+        let has_special_markers = text.contains('\x00') || text.contains('\x01');
+        if annotations.is_empty() && !has_special_markers && !in_strikethrough {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(text).size(base_font_size));
+            });
+            return;
+        }
+
+        // Fast path: no annotations, no footnotes, but has inline code - minimal processing
+        if annotations.is_empty() && !text.contains('\x01') {
+            ui.horizontal_wrapped(|ui| {
+                for part in text.split('\x00') {
+                    if let Some(code) = part.strip_prefix("CODE:") {
+                        let text_color = code_text_color.unwrap_or(Color32::from_rgb(206, 145, 120));
+                        let mut code_text = RichText::new(code)
+                            .size(base_font_size * 0.9)
+                            .monospace()
+                            .color(text_color)
+                            .background_color(Color32::from_gray(50));
+                        if in_strikethrough {
+                            code_text = code_text.strikethrough();
+                        }
+                        ui.label(code_text);
+                    } else if !part.is_empty() {
+                        let mut rich = RichText::new(part).size(base_font_size);
+                        if in_strikethrough {
+                            rich = rich.strikethrough();
+                        }
+                        ui.label(rich);
+                    }
+                }
+            });
+            return;
+        }
+
         // Annotations are already sorted by start position from AnnotationIndex
         // No need to re-sort or re-filter
 
@@ -1056,7 +1143,7 @@ impl MarkdownRenderer {
                         code_text = code_text.strikethrough();
                     }
                     ui.label(code_text);
-                    current_offset += code.chars().count();
+                    current_offset += code.len();
                 } else if !part.is_empty() {
                     // Handle footnote references within the text - use iterator directly
                     for fn_part in part.split('\x01') {
@@ -1101,7 +1188,7 @@ impl MarkdownRenderer {
                                 }
                                 ui.label(rich);
                             }
-                            current_offset += fn_part.chars().count();
+                            current_offset += fn_part.len();
                         }
                     }
                 }
@@ -1112,6 +1199,11 @@ impl MarkdownRenderer {
     fn render_blockquote(&mut self, ui: &mut Ui, base_font_size: f32) {
         let text = std::mem::take(&mut self.text_buffer);
         if text.is_empty() {
+            return;
+        }
+
+        // Viewport culling for blockquotes
+        if self.try_cull_text_element(ui, &text, 8.0) {
             return;
         }
 
@@ -1713,23 +1805,23 @@ impl MarkdownRenderer {
 
         let metadata = self.get_mermaid_metadata(code, internal_type);
 
-        // Render preview using cached metadata
+        // Render preview using cached metadata (metadata is already a reference)
         match diagram_type {
-            "Flowchart" | "Graph" => Self::render_flowchart_preview_cached(ui, &metadata),
-            "Sequence Diagram" => Self::render_sequence_preview_cached(ui, &metadata),
-            "Class Diagram" => Self::render_class_preview_cached(ui, &metadata),
-            "State Diagram" => Self::render_state_preview_cached(ui, &metadata),
-            "Gantt Chart" => Self::render_gantt_preview_cached(ui, &metadata),
-            "Pie Chart" => Self::render_pie_preview_cached(ui, &metadata),
-            "ER Diagram" => Self::render_er_preview_cached(ui, &metadata),
-            "User Journey" => Self::render_journey_preview_cached(ui, &metadata),
-            "Git Graph" => Self::render_gitgraph_preview_cached(ui, &metadata),
-            "Mind Map" => Self::render_mindmap_preview_cached(ui, &metadata),
-            "Timeline" => Self::render_timeline_preview_cached(ui, &metadata),
+            "Flowchart" | "Graph" => Self::render_flowchart_preview_cached(ui, metadata),
+            "Sequence Diagram" => Self::render_sequence_preview_cached(ui, metadata),
+            "Class Diagram" => Self::render_class_preview_cached(ui, metadata),
+            "State Diagram" => Self::render_state_preview_cached(ui, metadata),
+            "Gantt Chart" => Self::render_gantt_preview_cached(ui, metadata),
+            "Pie Chart" => Self::render_pie_preview_cached(ui, metadata),
+            "ER Diagram" => Self::render_er_preview_cached(ui, metadata),
+            "User Journey" => Self::render_journey_preview_cached(ui, metadata),
+            "Git Graph" => Self::render_gitgraph_preview_cached(ui, metadata),
+            "Mind Map" => Self::render_mindmap_preview_cached(ui, metadata),
+            "Timeline" => Self::render_timeline_preview_cached(ui, metadata),
             "Quadrant Chart" => Self::render_quadrant_preview_cached(ui),
-            "Requirement Diagram" => Self::render_requirement_preview_cached(ui, &metadata),
+            "Requirement Diagram" => Self::render_requirement_preview_cached(ui, metadata),
             "C4 Diagram" => Self::render_c4_preview_cached(ui),
-            _ => Self::render_generic_preview_cached(ui, &metadata),
+            _ => Self::render_generic_preview_cached(ui, metadata),
         }
     }
 
@@ -1906,6 +1998,18 @@ impl MarkdownRenderer {
         spacing: &crate::config::schema::SpacingConfig,
     ) {
         let text = std::mem::take(&mut self.text_buffer);
+
+        // Viewport culling for list items
+        if self.try_cull_text_element(ui, &text, 0.0) {
+            // Still need to advance list numbering even when culled
+            if let Some(ref mut num) = self.list_number {
+                *num += 1;
+            } else {
+                self.task_list_marker.take();
+            }
+            return;
+        }
+
         let indent = self.list_depth as f32 * spacing.list_indent;
 
         ui.horizontal(|ui| {
@@ -1952,6 +2056,19 @@ impl MarkdownRenderer {
 
     fn render_table(&mut self, ui: &mut Ui, base_font_size: f32) {
         if self.table_header.is_empty() && self.table_rows.is_empty() {
+            return;
+        }
+
+        // Viewport culling for tables
+        let cursor_y = ui.cursor().top();
+        if !self.is_position_visible(cursor_y) {
+            // Estimate table height: header + rows, each ~24px
+            let num_rows = self.table_rows.len() + 1; // +1 for header
+            let estimated_height = num_rows as f32 * 24.0 + 24.0; // extra for padding
+            let available_width = ui.available_width();
+            ui.allocate_space(Vec2::new(available_width, estimated_height));
+            self.table_count += 1;
+            self.culled_count += 1;
             return;
         }
 
@@ -2447,41 +2564,47 @@ fn fetch_remote_image_async(url: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Case-insensitive prefix check (avoids allocation from to_lowercase)
+#[inline]
+fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
+    s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
 /// Detect the type of Mermaid diagram from its source code
 fn detect_mermaid_type(code: &str) -> &'static str {
     let first_line = code.lines()
         .find(|l| !l.trim().is_empty())
-        .unwrap_or("")
-        .trim()
-        .to_lowercase();
+        .map(|l| l.trim())
+        .unwrap_or("");
 
-    if first_line.starts_with("graph") || first_line.starts_with("flowchart") {
+    // Use case-insensitive prefix matching (no allocation)
+    if starts_with_ignore_case(first_line, "graph") || starts_with_ignore_case(first_line, "flowchart") {
         "Flowchart"
-    } else if first_line.starts_with("sequencediagram") || first_line.starts_with("sequence") {
+    } else if starts_with_ignore_case(first_line, "sequencediagram") || starts_with_ignore_case(first_line, "sequence") {
         "Sequence Diagram"
-    } else if first_line.starts_with("classdiagram") || first_line.starts_with("class") {
+    } else if starts_with_ignore_case(first_line, "classdiagram") || starts_with_ignore_case(first_line, "class") {
         "Class Diagram"
-    } else if first_line.starts_with("statediagram") || first_line.starts_with("state") {
+    } else if starts_with_ignore_case(first_line, "statediagram") || starts_with_ignore_case(first_line, "state") {
         "State Diagram"
-    } else if first_line.starts_with("gantt") {
+    } else if starts_with_ignore_case(first_line, "gantt") {
         "Gantt Chart"
-    } else if first_line.starts_with("pie") {
+    } else if starts_with_ignore_case(first_line, "pie") {
         "Pie Chart"
-    } else if first_line.starts_with("erdiagram") || first_line.starts_with("er") {
+    } else if starts_with_ignore_case(first_line, "erdiagram") || starts_with_ignore_case(first_line, "er") {
         "ER Diagram"
-    } else if first_line.starts_with("journey") {
+    } else if starts_with_ignore_case(first_line, "journey") {
         "User Journey"
-    } else if first_line.starts_with("gitgraph") {
+    } else if starts_with_ignore_case(first_line, "gitgraph") {
         "Git Graph"
-    } else if first_line.starts_with("mindmap") {
+    } else if starts_with_ignore_case(first_line, "mindmap") {
         "Mind Map"
-    } else if first_line.starts_with("timeline") {
+    } else if starts_with_ignore_case(first_line, "timeline") {
         "Timeline"
-    } else if first_line.starts_with("quadrantchart") {
+    } else if starts_with_ignore_case(first_line, "quadrantchart") {
         "Quadrant Chart"
-    } else if first_line.starts_with("requirementdiagram") {
+    } else if starts_with_ignore_case(first_line, "requirementdiagram") {
         "Requirement Diagram"
-    } else if first_line.starts_with("c4context") || first_line.starts_with("c4container") {
+    } else if starts_with_ignore_case(first_line, "c4context") || starts_with_ignore_case(first_line, "c4container") {
         "C4 Diagram"
     } else {
         "Diagram"
