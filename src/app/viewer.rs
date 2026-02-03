@@ -285,6 +285,8 @@ pub struct MdViewApp {
     cached_keybindings: CachedKeybindings,
     /// Whether a file is being dragged over the window (for visual feedback)
     is_dragging_file: bool,
+    /// Pending file path to load after fade-out transition completes
+    pending_file_load: Option<PathBuf>,
 }
 
 impl MdViewApp {
@@ -372,6 +374,7 @@ impl MdViewApp {
             cached_is_default_handler: None,
             cached_keybindings,
             is_dragging_file: false,
+            pending_file_load: None,
         }
     }
 
@@ -1082,9 +1085,22 @@ impl MdViewApp {
         }
     }
 
-    /// Load a markdown file and update renderer state
+    /// Load a markdown file with fade transition
     fn load_markdown_file(&mut self, path: PathBuf) {
-        // Set the base path for image resolution
+        // If content is already displayed, fade out first then load
+        if !self.state.content.is_empty() {
+            self.pending_file_load = Some(path);
+            self.state.start_file_fade_out();
+        } else {
+            // No content to fade out — load directly with fade-in
+            self.perform_file_load(path);
+            self.state.file_transition_opacity = 0.0;
+            self.state.start_file_fade_in();
+        }
+    }
+
+    /// Actually load a file (called after fade-out completes or for first load)
+    fn perform_file_load(&mut self, path: PathBuf) {
         let base_path = path.parent().map(|p| p.to_path_buf());
         self.renderer.set_base_path(base_path);
         self.renderer.clear_image_cache();
@@ -1093,7 +1109,6 @@ impl MdViewApp {
             self.state.set_status(format_load_error(&e));
         }
 
-        // Update native menu state (enable file-specific items)
         self.sync_native_menu_state();
     }
 
@@ -1633,6 +1648,12 @@ impl MdViewApp {
                     return;
                 }
 
+                // Apply fade transition opacity
+                let opacity = self.state.file_transition_opacity;
+                if opacity < 1.0 {
+                    ui.set_opacity(opacity);
+                }
+
                 // Show deleted file warning banner
                 if self.state.file_deleted {
                     render_deleted_file_banner(ui, is_dark);
@@ -2152,6 +2173,18 @@ impl eframe::App for MdViewApp {
                 }
             } else {
                 self.load_markdown_file(path);
+            }
+        }
+
+        // Drive file transition animation
+        if self.state.update_file_transition() {
+            ctx.request_repaint();
+            // Check if fade-out just completed — time to load the pending file
+            if self.state.is_fade_out_complete() {
+                if let Some(path) = self.pending_file_load.take() {
+                    self.perform_file_load(path);
+                    self.state.start_file_fade_in();
+                }
             }
         }
 

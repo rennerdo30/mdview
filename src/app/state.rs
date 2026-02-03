@@ -178,6 +178,15 @@ pub struct AppState {
 
     /// Last frame time for animation delta calculation
     toc_animation_last_time: Option<std::time::Instant>,
+
+    /// File transition opacity (1.0 = fully visible, 0.0 = fully transparent)
+    pub file_transition_opacity: f32,
+
+    /// File transition phase: None = idle, Some(true) = fading out, Some(false) = fading in
+    pub file_transition_phase: Option<bool>,
+
+    /// Last frame time for file transition animation
+    file_transition_last_time: Option<std::time::Instant>,
 }
 
 impl AppState {
@@ -258,6 +267,9 @@ impl AppState {
             cached_config_hash: config_hash,
             toc_animation_progress: if toc_initially_visible { 1.0 } else { 0.0 },
             toc_animation_last_time: None,
+            file_transition_opacity: 1.0,
+            file_transition_phase: None,
+            file_transition_last_time: None,
         }
     }
 
@@ -318,6 +330,62 @@ impl AppState {
     pub fn toc_is_animating(&self) -> bool {
         let target = if self.config.general.show_toc { 1.0 } else { 0.0 };
         (self.toc_animation_progress - target).abs() > 0.001
+    }
+
+    /// Start a fade-out transition (called before switching files)
+    pub fn start_file_fade_out(&mut self) {
+        self.file_transition_phase = Some(true); // fading out
+        self.file_transition_last_time = None;
+    }
+
+    /// Update file transition animation. Returns true if still animating.
+    pub fn update_file_transition(&mut self) -> bool {
+        let phase = match self.file_transition_phase {
+            Some(phase) => phase,
+            None => return false,
+        };
+
+        let now = std::time::Instant::now();
+        let dt = self
+            .file_transition_last_time
+            .map(|last| now.duration_since(last).as_secs_f32())
+            .unwrap_or(0.016);
+        self.file_transition_last_time = Some(now);
+
+        // ~150ms per phase (fade-out or fade-in)
+        let speed = 1.0 / 0.15;
+
+        if phase {
+            // Fading out: opacity goes from 1.0 -> 0.0
+            self.file_transition_opacity = (self.file_transition_opacity - speed * dt).max(0.0);
+            if self.file_transition_opacity <= 0.001 {
+                self.file_transition_opacity = 0.0;
+                // Fade-out complete — signal that file should be loaded now
+                return true;
+            }
+        } else {
+            // Fading in: opacity goes from 0.0 -> 1.0
+            self.file_transition_opacity = (self.file_transition_opacity + speed * dt).min(1.0);
+            if self.file_transition_opacity >= 0.999 {
+                self.file_transition_opacity = 1.0;
+                self.file_transition_phase = None;
+                self.file_transition_last_time = None;
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Switch from fade-out to fade-in phase (called after file is loaded)
+    pub fn start_file_fade_in(&mut self) {
+        self.file_transition_phase = Some(false); // fading in
+        self.file_transition_last_time = None;
+    }
+
+    /// Whether the fade-out phase just completed (opacity reached 0)
+    pub fn is_fade_out_complete(&self) -> bool {
+        self.file_transition_phase == Some(true) && self.file_transition_opacity <= 0.001
     }
 
     /// Get current theme name (from config)
