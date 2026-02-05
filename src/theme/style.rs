@@ -35,6 +35,8 @@ pub mod palette {
     pub const SUCCESS: Color32 = Color32::from_rgb(80, 200, 120);       // #50c878
     pub const WARNING: Color32 = Color32::from_rgb(255, 183, 77);       // #ffb74d
     pub const ERROR: Color32 = Color32::from_rgb(239, 83, 80);          // #ef5350
+    pub const WARNING_BG: Color32 = Color32::from_rgb(80, 40, 40);      // dark warning bg
+    pub const WARNING_TEXT: Color32 = Color32::from_rgb(255, 180, 180);  // dark warning text
 
     // Border colors
     pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(38, 38, 48);   // #262630
@@ -63,6 +65,8 @@ pub mod palette {
         pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(220, 220, 228);
 
         pub const ACCENT: Color32 = Color32::from_rgb(45, 160, 158);      // darker teal for contrast
+        pub const WARNING_BG: Color32 = Color32::from_rgb(255, 240, 240);   // light warning bg
+        pub const WARNING_TEXT: Color32 = Color32::from_rgb(180, 60, 60);    // light warning text
     }
 }
 

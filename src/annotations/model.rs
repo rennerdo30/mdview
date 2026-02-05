@@ -200,6 +200,14 @@ pub struct AnnotationStore {
     /// Cached sorted annotations for efficient range queries (invalidated on mutation)
     #[serde(skip)]
     sorted_cache: Option<Vec<Annotation>>,
+
+    /// Cached sorted IDs for immutable access (invalidated on mutation)
+    #[serde(skip)]
+    sorted_ids_cache: Option<Vec<String>>,
+
+    /// Generation counter incremented on each mutation (for external cache invalidation)
+    #[serde(skip)]
+    generation: u64,
 }
 
 fn default_version() -> u32 {
@@ -213,12 +221,21 @@ impl AnnotationStore {
             document_hash: None,
             version: 1,
             sorted_cache: None,
+            sorted_ids_cache: None,
+            generation: 0,
         }
     }
 
     /// Invalidate the sorted cache (call after any mutation)
     fn invalidate_cache(&mut self) {
         self.sorted_cache = None;
+        self.sorted_ids_cache = None;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Get the generation counter (incremented on each mutation)
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Add an annotation
@@ -257,9 +274,26 @@ impl AnnotationStore {
 
     /// Get all annotations sorted by position (uses cache for efficiency)
     pub fn sorted_by_position(&self) -> Vec<&Annotation> {
+        // Use cached sorted order if available (avoids re-sorting every call)
+        if let Some(ref ids) = self.sorted_ids_cache {
+            return ids.iter()
+                .filter_map(|id| self.annotations.get(id))
+                .collect();
+        }
         let mut annotations: Vec<_> = self.annotations.values().collect();
         annotations.sort_by_key(|a| a.start);
         annotations
+    }
+
+    /// Ensure the sorted IDs cache is populated (call before immutable sorted access)
+    pub fn ensure_sorted_cache(&mut self) {
+        if self.sorted_ids_cache.is_none() {
+            let mut pairs: Vec<_> = self.annotations.iter()
+                .map(|(id, a)| (a.start, id.clone()))
+                .collect();
+            pairs.sort_by_key(|(start, _)| *start);
+            self.sorted_ids_cache = Some(pairs.into_iter().map(|(_, id)| id).collect());
+        }
     }
 
     /// Get cached sorted annotations for efficient repeated access

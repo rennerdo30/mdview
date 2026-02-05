@@ -120,23 +120,20 @@ impl RecentFiles {
     /// Results are cached for performance (avoids file existence checks every frame)
     pub fn get_existing(&mut self) -> Vec<&RecentFile> {
         // Check if cache is still valid
-        if let Some((_, cached_at)) = &self.existing_cache {
-            if cached_at.elapsed() < EXISTENCE_CACHE_DURATION {
-                // Return references to cached files that exist
-                // We need to recompute references since we can't store references in cache
-                return self.files.iter().filter(|f| f.exists()).collect();
-            }
+        let cache_valid = self.existing_cache.as_ref()
+            .is_some_and(|(_, cached_at)| cached_at.elapsed() < EXISTENCE_CACHE_DURATION);
+
+        if !cache_valid {
+            // Recompute and store cache
+            let existing: Vec<RecentFile> = self.files.iter()
+                .filter(|f| f.exists())
+                .cloned()
+                .collect();
+            self.existing_cache = Some((existing, std::time::Instant::now()));
         }
 
-        // Cache is invalid, recompute
-        let existing: Vec<RecentFile> = self.files.iter()
-            .filter(|f| f.exists())
-            .cloned()
-            .collect();
-        self.existing_cache = Some((existing, std::time::Instant::now()));
-
-        // Return references to original files that exist
-        self.files.iter().filter(|f| f.exists()).collect()
+        // Return references to cached results
+        self.existing_cache.as_ref().unwrap().0.iter().collect()
     }
 
     /// Check if there are any recent files

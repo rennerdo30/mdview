@@ -37,6 +37,8 @@ struct CachedKeybindings {
 
 /// Debounce duration for config writes
 const CONFIG_SAVE_DEBOUNCE_MS: u64 = 400;
+/// Debounce duration for annotation writes
+const ANNOTATION_SAVE_DEBOUNCE_MS: u64 = 400;
 const REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// Minimum font size for zoom
@@ -304,6 +306,8 @@ pub struct MdViewApp {
     cached_keybindings: CachedKeybindings,
     /// Last time a config save was requested (for debouncing)
     config_save_requested_at: Option<Instant>,
+    /// Last time an annotation save was requested (for debouncing)
+    annotation_save_requested_at: Option<Instant>,
     /// Whether a file is being dragged over the window (for visual feedback)
     is_dragging_file: bool,
     /// Pending file path to load after fade-out transition completes
@@ -404,6 +408,7 @@ impl MdViewApp {
             cached_is_default_handler: None,
             cached_keybindings,
             config_save_requested_at: None,
+            annotation_save_requested_at: None,
             is_dragging_file: false,
             pending_file_load: None,
             selection_drag_anchor: None,
@@ -856,7 +861,11 @@ impl MdViewApp {
                 }
                 MenuAction::ExportPdf => {
                     if self.state.current_file.is_some() {
-                        self.state.exporting_pdf = true;
+                        if self.state.file_deleted {
+                            self.state.set_status("Cannot export: file was deleted");
+                        } else {
+                            self.export_pdf();
+                        }
                     }
                 }
                 MenuAction::EditConfig => {
@@ -1251,7 +1260,7 @@ impl MdViewApp {
                 .or_else(|| Some(self.estimate_char_offset_from_scroll()))
                 .and_then(|offset| self.normalize_bookmark_offset(offset))
                 .unwrap_or(0);
-            self.handle_annotation_action(AnnotationAction::CreateBookmark(char_offset));
+            self.handle_annotation_action(AnnotationAction::CreateBookmark(char_offset), ctx);
         }
 
         if focus_toc_search {
@@ -1275,11 +1284,17 @@ impl MdViewApp {
         }
 
         if escape {
-            self.state.creating_annotation = false;
-            self.state.text_selection = None;
-            self.selection_drag_anchor = None;
-            self.annotation_popup.hide();
-            self.toc_panel.clear_search();
+            // Priority order: dismiss one thing per press
+            if self.annotation_popup.visible {
+                self.annotation_popup.hide();
+            } else if self.state.creating_annotation {
+                self.state.creating_annotation = false;
+            } else if self.state.text_selection.is_some() {
+                self.state.text_selection = None;
+                self.selection_drag_anchor = None;
+            } else if self.toc_panel.has_search() {
+                self.toc_panel.clear_search();
+            }
         }
     }
 
@@ -1291,6 +1306,9 @@ impl MdViewApp {
             .map(|rx| rx.try_iter().collect())
             .unwrap_or_default();
 
+        // Deduplicate: track whether we already reloaded this frame
+        let mut reloaded = false;
+
         for event in events {
             match event {
                 FileEvent::Modified(path) => {
@@ -1301,10 +1319,14 @@ impl MdViewApp {
                         // File was recreated after deletion
                         self.state.file_deleted = false;
                     }
-                    if let Err(e) = self.state.reload_file() {
-                        self.state.set_status(friendly_errors::format_reload_error(&e));
-                    } else {
-                        self.state.set_status("File updated");
+                    // Only reload once per frame even if multiple Modified events queued
+                    if !reloaded {
+                        if let Err(e) = self.state.reload_file() {
+                            self.state.set_status(friendly_errors::format_reload_error(&e));
+                        } else {
+                            self.state.set_status("File updated");
+                        }
+                        reloaded = true;
                     }
                 }
                 FileEvent::Removed(path) => {
@@ -1379,18 +1401,8 @@ impl MdViewApp {
         char_offset.min(content_len.saturating_sub(1))
     }
 
-    fn handle_annotation_action(&mut self, action: AnnotationAction) {
+    fn handle_annotation_action(&mut self, action: AnnotationAction, ctx: &egui::Context) {
         use crate::annotations::model::Annotation;
-
-        // Helper to save annotations with status feedback
-        let save_with_feedback = |state: &mut AppState| {
-            if state.config.annotations.auto_save {
-                if let Err(e) = state.save_annotations() {
-                    log::error!("Failed to auto-save annotations: {}", e);
-                    state.set_status("Could not save annotations. Check file permissions.");
-                }
-            }
-        };
 
         match action {
             AnnotationAction::CreateHighlight(start, end, color) => {
@@ -1398,7 +1410,9 @@ impl MdViewApp {
                 self.state.annotations.add(annotation);
                 self.state.set_status("Highlight added");
 
-                save_with_feedback(&mut self.state);
+                if self.state.config.annotations.auto_save {
+                    self.save_annotations_debounced(ctx);
+                }
 
                 // Call plugin hook
                 #[cfg(feature = "plugins")]
@@ -1409,7 +1423,9 @@ impl MdViewApp {
                 self.state.annotations.add(annotation);
                 self.state.set_status("Note added");
 
-                save_with_feedback(&mut self.state);
+                if self.state.config.annotations.auto_save {
+                    self.save_annotations_debounced(ctx);
+                }
 
                 #[cfg(feature = "plugins")]
                 self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnAnnotationAdd);
@@ -1419,7 +1435,9 @@ impl MdViewApp {
                 self.state.annotations.add(annotation);
                 self.state.set_status("Bookmark added");
 
-                save_with_feedback(&mut self.state);
+                if self.state.config.annotations.auto_save {
+                    self.save_annotations_debounced(ctx);
+                }
 
                 #[cfg(feature = "plugins")]
                 self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnAnnotationAdd);
@@ -1428,7 +1446,9 @@ impl MdViewApp {
                 self.state.annotations.remove(&id);
                 self.state.set_status("Annotation deleted");
 
-                save_with_feedback(&mut self.state);
+                if self.state.config.annotations.auto_save {
+                    self.save_annotations_debounced(ctx);
+                }
 
                 #[cfg(feature = "plugins")]
                 self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnAnnotationRemove);
@@ -1438,14 +1458,18 @@ impl MdViewApp {
                     ann.set_note(&text);
                 }
 
-                save_with_feedback(&mut self.state);
+                if self.state.config.annotations.auto_save {
+                    self.save_annotations_debounced(ctx);
+                }
             }
             AnnotationAction::UpdateColor(id, color) => {
                 if let Some(ann) = self.state.annotations.get_mut(&id) {
                     ann.set_color(&color);
                 }
 
-                save_with_feedback(&mut self.state);
+                if self.state.config.annotations.auto_save {
+                    self.save_annotations_debounced(ctx);
+                }
             }
         }
     }
@@ -1499,6 +1523,26 @@ impl MdViewApp {
             if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
                 log::warn!("Failed to save config: {}", e);
             }
+        }
+    }
+
+    /// Schedule a debounced annotation save
+    fn save_annotations_debounced(&mut self, ctx: &egui::Context) {
+        self.annotation_save_requested_at = Some(Instant::now());
+        ctx.request_repaint_after(Duration::from_millis(ANNOTATION_SAVE_DEBOUNCE_MS));
+    }
+
+    fn flush_annotation_save_if_due(&mut self) {
+        let Some(requested_at) = self.annotation_save_requested_at else {
+            return;
+        };
+
+        if requested_at.elapsed() >= Duration::from_millis(ANNOTATION_SAVE_DEBOUNCE_MS) {
+            if let Err(e) = self.state.save_annotations() {
+                log::error!("Failed to auto-save annotations: {}", e);
+                self.state.set_status("Could not save annotations. Check file permissions.");
+            }
+            self.annotation_save_requested_at = None;
         }
     }
 
@@ -2080,6 +2124,9 @@ impl MdViewApp {
                 // Get cached events (avoids parsing every frame)
                 let events = self.state.get_cached_events();
 
+                // Ensure annotation sort cache is populated before immutable borrow
+                self.state.annotations.ensure_sorted_cache();
+
                 // Get references instead of cloning
                 let annotations = &self.state.annotations;
                 let config = &self.state.config;
@@ -2243,15 +2290,10 @@ fn render_drag_drop_overlay(ui: &mut egui::Ui, is_dark: bool) {
 
 /// Render the deleted file warning banner
 fn render_deleted_file_banner(ui: &mut egui::Ui, is_dark: bool) {
-    let bg_color = if is_dark {
-        egui::Color32::from_rgb(80, 40, 40)
+    let (bg_color, text_color) = if is_dark {
+        (palette::WARNING_BG, palette::WARNING_TEXT)
     } else {
-        egui::Color32::from_rgb(255, 240, 240)
-    };
-    let text_color = if is_dark {
-        egui::Color32::from_rgb(255, 180, 180)
-    } else {
-        egui::Color32::from_rgb(180, 60, 60)
+        (palette::light::WARNING_BG, palette::light::WARNING_TEXT)
     };
 
     egui::Frame::none()
@@ -2549,11 +2591,13 @@ impl eframe::App for MdViewApp {
         // Show plugin failure notification (once)
         #[cfg(feature = "plugins")]
         if !self.shown_plugin_notification && self.state.has_failed_plugins() {
-            let count = self.state.failed_plugin_count();
-            let msg = if count == 1 {
-                "A plugin failed to load. Check logs for details.".to_string()
+            let names: Vec<String> = self.state.failed_plugins.iter()
+                .filter_map(|(path, _)| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+                .collect();
+            let msg = if names.len() == 1 {
+                format!("Plugin '{}' failed to load. Check logs for details.", names[0])
             } else {
-                format!("{} plugins failed to load. Check logs for details.", count)
+                format!("Plugins failed to load: {}. Check logs for details.", names.join(", "))
             };
             self.state.set_status(msg);
             self.state.clear_failed_plugins();
@@ -2595,6 +2639,7 @@ impl eframe::App for MdViewApp {
             self.is_dragging_file = false;
             if extra_dropped > 0 {
                 log::debug!("Ignoring {} additional dropped file(s)", extra_dropped);
+                self.state.set_status("Opened first file. mdview can only open one file at a time.");
             }
             // Check if it's a directory or file
             if path.is_dir() {
@@ -2639,7 +2684,7 @@ impl eframe::App for MdViewApp {
                 .frame(egui::Frame::none())
                 .show(ctx, |ui| {
                     if let Some(action) = self.annotation_popup.render(ui) {
-                        self.handle_annotation_action(action);
+                        self.handle_annotation_action(action, ctx);
                     }
                 });
         }
@@ -2681,11 +2726,9 @@ impl eframe::App for MdViewApp {
             self.render_about_dialog(ctx);
         }
 
-        // Reconcile watcher state after any file/config changes made this frame.
-        self.sync_file_watcher(ctx);
-
-        // Flush any pending config save after UI work is done
+        // Flush any pending saves after UI work is done
         self.flush_config_save_if_due();
+        self.flush_annotation_save_if_due();
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

@@ -55,12 +55,13 @@ struct VisibleRow {
     has_children: bool,
 }
 
-/// Check if a heading text matches the search query (case-insensitive substring)
-fn matches_search(text: &str, query: &str) -> bool {
-    if query.is_empty() {
+/// Check if a heading text matches the search query (case-insensitive substring).
+/// The `query` parameter should already be lowercased for efficiency.
+fn matches_search(text: &str, query_lower: &str) -> bool {
+    if query_lower.is_empty() {
         return true;
     }
-    text.to_lowercase().contains(&query.to_lowercase())
+    text.to_lowercase().contains(query_lower)
 }
 
 /// TOC panel widget
@@ -136,28 +137,40 @@ impl TocPanel {
 
         let mut clicked = None;
 
-        // Render search input field
+        // Render search input field with expand/collapse buttons
         ui.horizontal(|ui| {
             ui.add_space(8.0);
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_justify(true), |ui| {
-                let search_field = egui::TextEdit::singleline(&mut self.search_query)
-                    .hint_text("Filter...")
-                    .desired_width(ui.available_width() - 16.0)
-                    .font(egui::FontId::proportional(12.0))
-                    .margin(egui::Margin::symmetric(6.0, 4.0));
-                let response = ui.add(search_field);
+            let button_width = 40.0; // space for two small buttons
+            let search_field = egui::TextEdit::singleline(&mut self.search_query)
+                .hint_text("Filter...")
+                .desired_width(ui.available_width() - 16.0 - button_width)
+                .font(egui::FontId::proportional(12.0))
+                .margin(egui::Margin::symmetric(6.0, 4.0));
+            let response = ui.add(search_field);
 
-                if self.request_search_focus {
-                    response.request_focus();
-                    self.request_search_focus = false;
-                }
+            if self.request_search_focus {
+                response.request_focus();
+                self.request_search_focus = false;
+            }
 
-                // If the search field has focus, don't let TOC panel steal keyboard events
-                if response.has_focus() {
-                    self.has_focus = false;
-                }
-            });
-            ui.add_space(8.0);
+            // If the search field has focus, don't let TOC panel steal keyboard events
+            if response.has_focus() {
+                self.has_focus = false;
+            }
+
+            // Expand/collapse all buttons
+            let btn_color = colors.text_muted;
+            if ui.add(egui::Button::new(
+                egui::RichText::new("+").size(12.0).color(btn_color)
+            ).frame(false)).on_hover_text("Expand all").clicked() {
+                self.expand_all();
+            }
+            if ui.add(egui::Button::new(
+                egui::RichText::new("-").size(12.0).color(btn_color)
+            ).frame(false)).on_hover_text("Collapse all").clicked() {
+                self.collapse_all();
+            }
+            ui.add_space(4.0);
         });
         ui.add_space(4.0);
 
@@ -169,9 +182,10 @@ impl TocPanel {
         } else {
             // Rebuild cache only when search query changes
             if self.cached_search_query != self.search_query || self.matching_indices_cache.is_none() {
+                let query_lower = self.search_query.to_lowercase();
                 let mut matches = vec![false; toc.len()];
                 for entry in &toc.flat {
-                    if matches_search(&entry.text, &self.search_query) {
+                    if matches_search(&entry.text, &query_lower) {
                         matches[entry.index] = true;
                     }
                 }
@@ -183,15 +197,16 @@ impl TocPanel {
 
         // Build visible rows for virtualized rendering in the common no-filter case.
         let mut visible_rows: Option<Vec<VisibleRow>> = None;
-        let visible_indices = if matching_indices.is_none() {
+        let visible_indices: Vec<usize> = if matching_indices.is_none() {
             let mut rows = Vec::new();
             self.collect_visible_rows(&toc.entries, 0, &mut rows);
             let indices = rows.iter().map(|row| row.index).collect();
             visible_rows = Some(rows);
             indices
         } else {
-            // Keep recursive rendering path while filtering to preserve match/ancestor behavior.
-            self.get_visible_indices(toc)
+            // Ensure cache is populated, then take a clone for keyboard nav use
+            self.ensure_visible_indices(toc);
+            self.get_visible_indices_cached().to_vec()
         };
 
         // Handle keyboard navigation
@@ -275,20 +290,18 @@ impl TocPanel {
         clicked
     }
 
-    /// Get a flat list of visible (not collapsed) entry indices
-    /// Uses caching to avoid O(n) tree traversal every frame
-    /// Returns a clone of the cached Vec (much cheaper than tree traversal)
-    fn get_visible_indices(&mut self, toc: &TocTree) -> Vec<usize> {
-        // Check if cache is valid (invalidated when collapsed state changes)
-        if let Some(ref cached) = self.cached_visible_indices {
-            return cached.clone();
+    /// Ensure the visible indices cache is populated (call before accessing)
+    fn ensure_visible_indices(&mut self, toc: &TocTree) {
+        if self.cached_visible_indices.is_none() {
+            let mut indices = Vec::new();
+            self.collect_visible_indices(&toc.entries, &mut indices);
+            self.cached_visible_indices = Some(indices);
         }
+    }
 
-        // Rebuild cache - tree traversal only happens when collapsed state changes
-        let mut indices = Vec::new();
-        self.collect_visible_indices(&toc.entries, &mut indices);
-        self.cached_visible_indices = Some(indices.clone());
-        indices
+    /// Get a flat list of visible (not collapsed) entry indices from cache
+    fn get_visible_indices_cached(&self) -> &[usize] {
+        self.cached_visible_indices.as_deref().unwrap_or(&[])
     }
 
     fn collect_visible_indices(&self, entries: &[TocEntry], indices: &mut Vec<usize>) {
@@ -752,8 +765,8 @@ impl TocPanel {
 /// Truncate text to fit within a given width
 /// Returns Cow::Borrowed when no truncation needed (zero allocation)
 fn truncate_text(text: &str, max_width: f32, font_size: f32) -> Cow<'_, str> {
-    // Rough estimate: average character width is about 0.5 * font_size
-    let char_width = font_size * 0.5;
+    // Rough estimate: average character width for proportional fonts is about 0.55 * font_size
+    let char_width = font_size * 0.55;
     let max_chars = (max_width / char_width) as usize;
     let char_count = text.chars().count();
 
@@ -796,6 +809,11 @@ impl TocPanel {
         self.request_search_focus = true;
     }
 
+    /// Check if there is an active search query
+    pub fn has_search(&self) -> bool {
+        !self.search_query.is_empty()
+    }
+
     /// Clear the search query
     pub fn clear_search(&mut self) {
         self.search_query.clear();
@@ -836,8 +854,9 @@ mod tests {
 
     #[test]
     fn test_matches_search() {
+        // matches_search expects query to be pre-lowercased
         assert!(matches_search("Hello World", "hello"));
-        assert!(matches_search("Hello World", "WORLD"));
+        assert!(matches_search("Hello World", "world"));
         assert!(matches_search("Hello World", "lo wo"));
         assert!(matches_search("Hello World", ""));
         assert!(!matches_search("Hello World", "xyz"));

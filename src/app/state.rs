@@ -144,9 +144,6 @@ pub struct AppState {
     /// Status message to display
     pub status_message: Option<(String, std::time::Instant)>,
 
-    /// Whether PDF export is in progress
-    pub exporting_pdf: bool,
-
     /// Heading positions for scroll-to navigation (heading_idx -> y_offset)
     pub heading_positions: Vec<f32>,
 
@@ -267,7 +264,6 @@ impl AppState {
             creating_annotation: false,
             pending_note_text: String::new(),
             status_message: None,
-            exporting_pdf: false,
             heading_positions: Vec::new(),
             visible_char_range: None,
             scroll_to_heading: None,
@@ -444,10 +440,13 @@ impl AppState {
         self.status_message = Some((message.into(), std::time::Instant::now()));
     }
 
-    /// Clear expired status message (after 3 seconds)
+    /// Duration in seconds before status messages auto-clear
+    const STATUS_MESSAGE_DURATION_SECS: u64 = 3;
+
+    /// Clear expired status message
     pub fn clear_expired_status(&mut self) {
         if let Some((_, instant)) = &self.status_message {
-            if instant.elapsed().as_secs() >= 3 {
+            if instant.elapsed().as_secs() >= Self::STATUS_MESSAGE_DURATION_SECS {
                 self.status_message = None;
             }
         }

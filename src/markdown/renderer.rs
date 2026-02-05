@@ -37,10 +37,11 @@ struct AnnotationIndex<'a> {
 }
 
 impl<'a> AnnotationIndex<'a> {
-    /// Build an index from all annotations (sorted by start position)
+    /// Build an index from all annotations (sorted by start position).
+    /// If `ensure_sorted_cache()` was called on the store beforehand,
+    /// this returns pre-sorted refs in O(n) instead of O(n log n).
     fn new(annotations: &'a AnnotationStore) -> Self {
-        let mut sorted: Vec<&'a Annotation> = annotations.all().collect();
-        sorted.sort_by_key(|a| a.start);
+        let sorted = annotations.sorted_by_position();
         Self { sorted_annotations: sorted }
     }
 
@@ -868,10 +869,9 @@ impl MarkdownRenderer {
         }
 
         // Use entry API to avoid clone - returns reference to cached or newly inserted value
-        let diagram_type_owned = diagram_type.to_string();
-        let code_owned = code.to_string();
+        // Only allocate owned strings inside the cache-miss closure
         self.mermaid_metadata_cache.entry(cache_key).or_insert_with(|| {
-            Self::compute_mermaid_metadata(&code_owned, &diagram_type_owned)
+            Self::compute_mermaid_metadata(code, diagram_type)
         })
     }
 
@@ -1958,11 +1958,10 @@ impl MarkdownRenderer {
                 // Fallback: plain monospace text (with optional line numbers)
                 if !rendered {
                     if show_line_numbers {
-                        let lines: Vec<&str> = code.lines().collect();
-                        let line_count = lines.len();
+                        let line_count = code.lines().count();
                         let digits = if line_count == 0 { 1 } else { (line_count as f32).log10().floor() as usize + 1 };
                         let mut numbered = String::with_capacity(code.len() + line_count * (digits + 3));
-                        for (i, line) in lines.iter().enumerate() {
+                        for (i, line) in code.lines().enumerate() {
                             use std::fmt::Write;
                             let _ = writeln!(numbered, "{:>width$}  {}", i + 1, line, width = digits);
                         }
