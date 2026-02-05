@@ -51,6 +51,34 @@ None
 ### Code Quality
 - [x] Split render_menu_bar() (216 lines) - refactored into 6 focused functions
 
+### Security & Correctness (Codebase Review)
+- [x] Annotation byte offset documentation aligned with pulldown-cmark
+- [x] Annotation ID collision prevention (atomic counter)
+- [x] Plugin sandbox hardened (removed require, loadstring, load, rawget, rawset, package)
+- [x] Config save failure UI error feedback
+- [x] Image path traversal prevention (canonicalization + base path check)
+- [x] Annotation file size limits (10MB on load and save)
+- [x] Network timeout for update checker (10s)
+- [x] Theme switch cache invalidation (config hash + markdown cache reset)
+- [x] Deterministic config hashing (FNV-1a replaces DefaultHasher)
+- [x] File watcher canonicalized path comparison
+- [x] Directory scan depth limit (32) and symlink cycle prevention
+- [x] Windows file association exe path validation
+- [x] Mermaid temp file collision-free naming (atomic counter)
+- [x] Windows native menu null HWND safety check
+
+### Performance (Codebase Review)
+- [x] Mermaid metadata cache LRU eviction (max 200 entries)
+- [x] Consolidated parse_hex_color to single implementation
+- [x] TOC search results caching (invalidate on query change)
+- [x] TOC visible indices mutation tracking (replaces hash-based invalidation)
+- [x] Removed redundant annotation overlap check in AnnotationIndex
+- [x] Removed redundant sync_file_watcher call (3x -> 2x per frame)
+- [x] Syntax cache Arc<LayoutJob> to avoid clones on cache hits
+- [x] Status bar file path cached (avoids per-frame allocation)
+- [x] Magic numbers extracted to named constants
+- [x] 3-char hex color shorthand support (#rgb)
+
 ## Known Limitations
 
 - egui renders in-window menus; native menus are separate via muda

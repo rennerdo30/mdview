@@ -29,6 +29,9 @@ The Lua environment is sandboxed:
 - No file I/O (`io`, `dofile`, `loadfile`)
 - No OS access (`os`)
 - No debug library
+- No dynamic code loading (`require`, `load`, `loadstring`)
+- No raw table access (`rawget`, `rawset`)
+- No package system (`package`)
 - Safe functions: `string`, `table`, `math`, `pairs`, `ipairs`, etc.
 
 ---
@@ -362,6 +365,9 @@ Not available:
 - `os` - System access
 - `debug` - Debug library
 - `dofile`, `loadfile` - File loading
+- `require`, `load`, `loadstring` - Dynamic code loading
+- `rawget`, `rawset` - Raw table access (bypasses metatables)
+- `package` - Package/module system
 
 ### No UI Modification
 

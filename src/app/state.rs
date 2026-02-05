@@ -201,6 +201,9 @@ pub struct AppState {
 
     /// Last frame time for file transition animation
     file_transition_last_time: Option<std::time::Instant>,
+
+    /// Cached file path display string (avoids per-frame allocation in status bar)
+    pub cached_file_display: Option<String>,
 }
 
 impl AppState {
@@ -284,6 +287,7 @@ impl AppState {
             file_transition_opacity: 1.0,
             file_transition_phase: None,
             file_transition_last_time: None,
+            cached_file_display: None,
         }
     }
 
@@ -492,6 +496,7 @@ impl AppState {
         let had_annotation_error = annotations.is_empty() &&
             crate::annotations::storage::annotations_exist(&path);
 
+        self.cached_file_display = Some(path.display().to_string());
         self.current_file = Some(path.clone());
         self.content = Arc::new(content);
         self.content_hash = content_hash;

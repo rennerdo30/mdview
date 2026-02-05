@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -24,6 +25,9 @@ const SYNTAX_CACHE_MAX_SIZE: usize = 100;
 
 /// Maximum number of mermaid metadata entries to cache
 const MERMAID_METADATA_CACHE_MAX_SIZE: usize = 200;
+
+/// Default viewport buffer when visible rect is unknown (in pixels)
+const DEFAULT_VIEWPORT_BUFFER: f32 = 2000.0;
 
 /// Pre-built annotation index for efficient O(log n) lookups
 /// Instead of O(n) scan per character, we build a sorted list of annotation boundaries
@@ -585,9 +589,10 @@ pub struct MarkdownRenderer {
 
     /// Cache for syntax-highlighted code blocks with LRU ordering
     /// Key: (code_hash, language, theme_name)
-    /// Using IndexMap for O(1) access and LRU eviction
+    /// Using IndexMap for O(1) access and LRU eviction.
+    /// Arc wrapper avoids expensive LayoutJob clones on cache hits.
     #[cfg(feature = "syntax-highlighting")]
-    syntax_cache: IndexMap<String, egui::text::LayoutJob>,
+    syntax_cache: IndexMap<String, Arc<egui::text::LayoutJob>>,
 
     /// Cache for mermaid diagram metadata (avoids re-parsing every frame)
     mermaid_metadata_cache: HashMap<String, MermaidMetadata>,
@@ -757,7 +762,8 @@ impl MarkdownRenderer {
     }
 
     /// Get syntax-highlighted code block with caching (O(1) LRU using IndexMap)
-    /// Returns cached LayoutJob if available, otherwise computes and caches it
+    /// Returns cached LayoutJob if available, otherwise computes and caches it.
+    /// Uses Arc to avoid expensive LayoutJob clones on cache hits.
     #[cfg(feature = "syntax-highlighting")]
     fn get_highlighted_code(
         &mut self,
@@ -766,7 +772,7 @@ impl MarkdownRenderer {
         theme_name: &str,
         is_dark: bool,
         show_line_numbers: bool,
-    ) -> Option<egui::text::LayoutJob> {
+    ) -> Option<Arc<egui::text::LayoutJob>> {
         // Generate cache key from code hash + language + theme + dark mode + line numbers
         let cache_key = {
             use sha2::{Sha256, Digest};
@@ -780,6 +786,7 @@ impl MarkdownRenderer {
         };
 
         // Check cache first - if found, move to end for LRU (O(1) with IndexMap)
+        // Arc clones are cheap (atomic refcount) vs full LayoutJob clones
         if let Some(job) = self.syntax_cache.get(&cache_key).cloned() {
             // Move to end for LRU tracking (most recently used)
             self.syntax_cache.shift_remove(&cache_key);
@@ -788,7 +795,7 @@ impl MarkdownRenderer {
         }
 
         // Cache miss - compute syntax highlighting
-        let job = highlight_code(code, language, theme_name, is_dark, show_line_numbers)?;
+        let job = Arc::new(highlight_code(code, language, theme_name, is_dark, show_line_numbers)?);
 
         // Cache with LRU eviction (O(1) operations)
         while self.syntax_cache.len() >= SYNTAX_CACHE_MAX_SIZE {
@@ -1148,7 +1155,7 @@ impl MarkdownRenderer {
 
         // Use block-level culling: skip entire blocks that are off-screen
         let visible_rect = self.visible_rect;
-        let buffer = visible_rect.map(|r| r.height() * 2.0).unwrap_or(2000.0);
+        let buffer = visible_rect.map(|r| r.height() * 2.0).unwrap_or(DEFAULT_VIEWPORT_BUFFER);
         let viewport_top = visible_rect.map(|r| r.top()).unwrap_or(0.0);
         let viewport_bottom = visible_rect.map(|r| r.bottom()).unwrap_or(f32::MAX);
 
@@ -1944,7 +1951,7 @@ impl MarkdownRenderer {
 
                 #[cfg(feature = "syntax-highlighting")]
                 if let Some(job) = highlighted_job {
-                    ui.label(job);
+                    ui.label((*job).clone());
                     rendered = true;
                 }
 

@@ -416,11 +416,24 @@ hot_reload = true
 ### Render Optimization
 
 1. Viewport culling (only visible content)
-2. LRU cache for layout jobs
+2. LRU cache for layout jobs (image: 50, syntax: 100, mermaid: 200 entries)
 3. Debounced file watching
+4. `Arc<LayoutJob>` for syntax cache (avoids expensive clones on cache hits)
+5. Deterministic FNV-1a config hashing for efficient cache invalidation
+6. TOC search results cached (invalidated only when query changes)
+7. Status bar file path cached (avoids per-frame string allocation)
 
 ### Memory Optimization
 
 1. Stream parsing (no full AST)
-2. Cache eviction policy
+2. Cache eviction policy (LRU with configurable max sizes)
 3. Clone-on-write for large strings
+4. Annotation file size limits (10MB max on load and save)
+
+### Security
+
+1. Image path traversal prevention (canonicalization + base path containment check)
+2. Plugin sandbox: removes dangerous globals (`io`, `os`, `debug`, `require`, `load`, `loadstring`, `rawget`, `rawset`, `package`)
+3. Directory scanning: depth limit (32 levels), symlink cycle prevention
+4. Windows file association: exe path validation against injection characters
+5. Network operations: timeout enforcement (10s for update checks)

@@ -39,6 +39,15 @@ struct CachedKeybindings {
 const CONFIG_SAVE_DEBOUNCE_MS: u64 = 400;
 const REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
 
+/// Minimum font size for zoom
+const FONT_SIZE_MIN: f32 = 8.0;
+/// Maximum font size for zoom
+const FONT_SIZE_MAX: f32 = 32.0;
+/// Scroll delta threshold for zoom steps (pixels per step)
+const ZOOM_SCROLL_STEP: f32 = 40.0;
+/// Estimated pixels-per-character ratio for scroll position estimation
+const ESTIMATED_PIXELS_PER_CHAR: f32 = 0.25;
+
 impl CachedKeybindings {
     fn from_config(config: &crate::config::schema::KeybindingsConfig) -> Self {
         Self {
@@ -842,6 +851,7 @@ impl MdViewApp {
                 MenuAction::Close => {
                     // Clear current file
                     self.state.current_file = None;
+                    self.state.cached_file_display = None;
                     self.state.clear_content();
                 }
                 MenuAction::ExportPdf => {
@@ -1085,7 +1095,7 @@ impl MdViewApp {
 
     fn apply_zoom_delta(&mut self, ctx: &egui::Context, delta: f32) -> bool {
         let old_size = self.state.config.theme.fonts.size;
-        let new_size = (old_size + delta).clamp(8.0, 32.0);
+        let new_size = (old_size + delta).clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
 
         if (new_size - old_size).abs() < f32::EPSILON {
             return false;
@@ -1122,7 +1132,7 @@ impl MdViewApp {
         }
 
         let direction = if scroll_delta > 0.0 { 1.0 } else { -1.0 };
-        let steps = (scroll_delta.abs() / 40.0).ceil().max(1.0) as usize;
+        let steps = (scroll_delta.abs() / ZOOM_SCROLL_STEP).ceil().max(1.0) as usize;
         for _ in 0..steps {
             if !self.apply_zoom_delta(ctx, direction) {
                 break;
@@ -1357,7 +1367,7 @@ impl MdViewApp {
 
         // Estimated total scroll height based on content
         // Assume ~20 pixels per line, ~80 chars per line
-        let estimated_total_height = (content_len as f32) * 0.25;
+        let estimated_total_height = (content_len as f32) * ESTIMATED_PIXELS_PER_CHAR;
 
         if estimated_total_height <= 0.0 {
             return 0;
@@ -1849,9 +1859,9 @@ impl MdViewApp {
                                 .color(accent)
                                 .small()
                         );
-                    } else if let Some(file) = &self.state.current_file {
+                    } else if let Some(display) = &self.state.cached_file_display {
                         ui.label(
-                            egui::RichText::new(file.display().to_string())
+                            egui::RichText::new(display)
                                 .color(text_muted)
                                 .small()
                         );
