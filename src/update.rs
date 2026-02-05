@@ -136,8 +136,10 @@ pub fn check_for_update() -> Option<UpdateInfo> {
     if is_newer_version(&new_version, CURRENT_VERSION) {
         // Truncate release notes to first 500 chars
         let notes = release.body.map(|b: String| {
-            if b.len() > 500 {
-                format!("{}...", &b[..500])
+            const MAX_CHARS: usize = 500;
+            if b.chars().count() > MAX_CHARS {
+                let truncated: String = b.chars().take(MAX_CHARS).collect();
+                format!("{}...", truncated)
             } else {
                 b
             }

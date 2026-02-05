@@ -571,11 +571,15 @@ fn truncate_text(text: &str, max_width: f32, font_size: f32) -> Cow<'_, str> {
     // Rough estimate: average character width is about 0.5 * font_size
     let char_width = font_size * 0.5;
     let max_chars = (max_width / char_width) as usize;
+    let char_count = text.chars().count();
 
-    if text.len() <= max_chars {
+    if char_count <= max_chars {
         Cow::Borrowed(text)
     } else if max_chars > 3 {
-        Cow::Owned(format!("{}...", &text[..max_chars - 3]))
+        let mut truncated = String::with_capacity(max_chars);
+        truncated.extend(text.chars().take(max_chars - 3));
+        truncated.push_str("...");
+        Cow::Owned(truncated)
     } else {
         Cow::Borrowed(text)
     }

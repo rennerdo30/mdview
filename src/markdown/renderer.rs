@@ -612,6 +612,10 @@ pub struct MarkdownRenderer {
     /// Running Y offset accumulator for block-level culling
     /// Tracks estimated cumulative height as blocks are skipped/rendered
     block_y_offset: f32,
+
+    /// Screen-space hit boxes for rendered text runs (start/end byte offsets).
+    /// Rebuilt every frame and used for approximate pointer-to-text selection mapping.
+    text_hit_boxes: Vec<(egui::Rect, usize, usize)>,
 }
 
 impl MarkdownRenderer {
@@ -665,6 +669,7 @@ impl MarkdownRenderer {
             culled_count: 0,
             cached_block_map: None,
             block_y_offset: 0.0,
+            text_hit_boxes: Vec::new(),
         }
     }
 
@@ -802,6 +807,24 @@ impl MarkdownRenderer {
     /// Get the current character offset (position in document after last rendered element)
     pub fn current_char_offset(&self) -> usize {
         self.char_offset
+    }
+
+    /// Map a pointer position to an approximate document byte offset.
+    pub fn hit_test_char_offset(&self, pos: egui::Pos2) -> Option<usize> {
+        for (rect, start, end) in self.text_hit_boxes.iter().rev() {
+            if rect.contains(pos) {
+                let span = end.saturating_sub(*start);
+                if span == 0 {
+                    return Some(*start);
+                }
+                let width = rect.width().max(1.0);
+                let x = (pos.x - rect.left()).clamp(0.0, width);
+                let ratio = x / width;
+                let offset = *start + (ratio * span as f32).floor() as usize;
+                return Some(offset.min(*end));
+            }
+        }
+        None
     }
 
     /// Clear only the mermaid caches (call to retry failed renders)
@@ -1250,6 +1273,7 @@ impl MarkdownRenderer {
         self.code_block_count = 0;
         self.culled_count = 0;
         self.block_y_offset = 0.0;
+        self.text_hit_boxes.clear();
     }
 
     fn handle_start_tag(&mut self, tag: &Tag<'_>, ui: &mut Ui, heading_positions: &mut Vec<f32>) {
@@ -1486,7 +1510,10 @@ impl MarkdownRenderer {
             rich_text = rich_text.color(color);
         }
 
-        ui.label(rich_text);
+        let heading_start = self.char_offset.saturating_sub(text.len());
+        let heading_end = self.char_offset;
+        let response = ui.label(rich_text);
+        self.record_text_hit(response.rect, heading_start, heading_end);
 
         ui.add_space(bottom_space);
     }
@@ -1543,12 +1570,14 @@ impl MarkdownRenderer {
         ui.add_space(spacing.paragraph);
     }
 
-    fn render_mixed_content(&self, ui: &mut Ui, text: &str, base_font_size: f32) {
-        self.render_mixed_content_with_annotations(ui, text, base_font_size, 0, &[], None, self.in_strikethrough);
+    fn record_text_hit(&mut self, rect: egui::Rect, start: usize, end: usize) {
+        if end > start {
+            self.text_hit_boxes.push((rect, start, end));
+        }
     }
 
     fn render_annotated_text_run(
-        &self,
+        &mut self,
         ui: &mut Ui,
         text: &str,
         base_font_size: f32,
@@ -1611,12 +1640,13 @@ impl MarkdownRenderer {
             if in_strikethrough {
                 rich = rich.strikethrough();
             }
-            ui.label(rich);
+            let response = ui.label(rich);
+            self.record_text_hit(response.rect, run_start, run_end);
         }
     }
 
     fn render_mixed_content_with_annotations(
-        &self,
+        &mut self,
         ui: &mut Ui,
         text: &str,
         base_font_size: f32,
@@ -1632,7 +1662,8 @@ impl MarkdownRenderer {
             || text.contains(LINK_END_MARKER);
         if annotations.is_empty() && !has_special_markers && !in_strikethrough {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(text).size(base_font_size));
+                let response = ui.label(RichText::new(text).size(base_font_size));
+                self.record_text_hit(response.rect, start_offset, start_offset + text.len());
             });
             return;
         }
@@ -1644,6 +1675,7 @@ impl MarkdownRenderer {
             && !text.contains(LINK_END_MARKER)
         {
             ui.horizontal_wrapped(|ui| {
+                let mut current_offset = start_offset;
                 for part in text.split(INLINE_CODE_MARKER) {
                     if let Some(code) = part.strip_prefix("CODE:") {
                         let text_color = code_text_color.unwrap_or(Color32::from_rgb(206, 145, 120));
@@ -1655,13 +1687,17 @@ impl MarkdownRenderer {
                         if in_strikethrough {
                             code_text = code_text.strikethrough();
                         }
-                        ui.label(code_text);
+                        let response = ui.label(code_text);
+                        self.record_text_hit(response.rect, current_offset, current_offset + code.len());
+                        current_offset += code.len();
                     } else if !part.is_empty() {
                         let mut rich = RichText::new(part).size(base_font_size);
                         if in_strikethrough {
                             rich = rich.strikethrough();
                         }
-                        ui.label(rich);
+                        let response = ui.label(rich);
+                        self.record_text_hit(response.rect, current_offset, current_offset + part.len());
+                        current_offset += part.len();
                     }
                 }
             });
@@ -1685,7 +1721,8 @@ impl MarkdownRenderer {
                     if in_strikethrough {
                         code_text = code_text.strikethrough();
                     }
-                    ui.label(code_text);
+                    let response = ui.label(code_text);
+                    self.record_text_hit(response.rect, current_offset, current_offset + code.len());
                     current_offset += code.len();
                 } else if !part.is_empty() {
                     // Handle footnote references within the text - use iterator directly
@@ -1738,7 +1775,13 @@ impl MarkdownRenderer {
                                                 if in_strikethrough {
                                                     link_rich = link_rich.strikethrough();
                                                 }
-                                                if ui.link(link_rich).clicked() {
+                                                let response = ui.link(link_rich);
+                                                self.record_text_hit(
+                                                    response.rect,
+                                                    current_offset,
+                                                    current_offset + link_text.len(),
+                                                );
+                                                if response.clicked() {
                                                     if let Err(e) = open::that(url) {
                                                         log::error!("Failed to open link: {}", e);
                                                     }
@@ -1806,7 +1849,10 @@ impl MarkdownRenderer {
                 .italics()
                 .color(Color32::from_gray(180));
 
-            ui.label(quote_text);
+            let quote_start = self.char_offset.saturating_sub(text.len());
+            let quote_end = self.char_offset;
+            let response = ui.label(quote_text);
+            self.record_text_hit(response.rect, quote_start, quote_end);
         });
 
         ui.add_space(8.0);
@@ -2623,6 +2669,7 @@ impl MarkdownRenderer {
             ui.add_space(4.0);
 
             if !text.is_empty() {
+                let item_start = self.char_offset.saturating_sub(text.len());
                 // Give list item text an explicit width so wrapped inline content
                 // stays beside the marker instead of collapsing underneath it.
                 let text_width = ui.available_width().max(1.0);
@@ -2630,7 +2677,15 @@ impl MarkdownRenderer {
                     Vec2::new(text_width, 0.0),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        self.render_mixed_content(ui, &text, base_font_size);
+                        self.render_mixed_content_with_annotations(
+                            ui,
+                            &text,
+                            base_font_size,
+                            item_start,
+                            &[],
+                            None,
+                            self.in_strikethrough,
+                        );
                     },
                 );
             }

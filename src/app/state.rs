@@ -75,8 +75,8 @@ fn compute_content_hash(content: &str) -> String {
 /// File change event from the watcher
 #[derive(Debug, Clone)]
 pub enum FileEvent {
-    Modified,
-    Removed,
+    Modified(PathBuf),
+    Removed(PathBuf),
     Error(String),
 }
 
@@ -203,8 +203,8 @@ impl AppState {
             match LuaRuntime::new() {
                 Ok(runtime) => {
                     // Load plugins from config directory
-                    if let Some(dirs) = directories::ProjectDirs::from("", "", "mdview") {
-                        let plugins_dir = dirs.config_dir().join("plugins");
+                    if let Some(config_dir) = crate::config::loader::get_config_dir() {
+                        let plugins_dir = config_dir.join("plugins");
                         if plugins_dir.exists() {
                             if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
                                 for entry in entries.flatten() {
@@ -486,6 +486,9 @@ impl AppState {
         self.show_recent_files = false;
         self.file_deleted = false;
         self.is_loading = false;
+        self.text_selection = None;
+        self.creating_annotation = false;
+        self.pending_note_text.clear();
 
         // Show warning if annotations couldn't be loaded
         if had_annotation_error {

@@ -50,9 +50,9 @@ impl FileWatcher {
                         if has_event {
                             // Check if file was removed vs modified
                             if watched_path.exists() {
-                                let _ = sender.send(FileEvent::Modified);
+                                let _ = sender.send(FileEvent::Modified(watched_path.clone()));
                             } else {
-                                let _ = sender.send(FileEvent::Removed);
+                                let _ = sender.send(FileEvent::Removed(watched_path.clone()));
                             }
                             // Request repaint
                             ctx.request_repaint();

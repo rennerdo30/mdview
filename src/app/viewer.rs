@@ -265,7 +265,9 @@ use crate::watcher::file_watcher::FileWatcher;
 pub struct MdViewApp {
     /// Application state
     pub state: AppState,
-    _watcher: Option<FileWatcher>,
+    watcher: Option<FileWatcher>,
+    /// File currently being watched for hot reload
+    watched_file: Option<PathBuf>,
     renderer: MarkdownRenderer,
     toc_panel: TocPanel,
     annotation_popup: AnnotationPopup,
@@ -297,6 +299,8 @@ pub struct MdViewApp {
     is_dragging_file: bool,
     /// Pending file path to load after fade-out transition completes
     pending_file_load: Option<PathBuf>,
+    /// Anchor offset used while dragging to create a text selection
+    selection_drag_anchor: Option<usize>,
 }
 
 impl MdViewApp {
@@ -333,11 +337,16 @@ impl MdViewApp {
             }
         }
 
-        // Set up file watcher
-        let watcher = if state.config.general.hot_reload {
-            setup_file_watcher(&mut state, cc.egui_ctx.clone())
+        // Set up file watcher (only when opening directly into a file)
+        let (watcher, watched_file) = if state.config.general.hot_reload {
+            if let Some(path) = state.current_file.clone() {
+                let watcher = setup_file_watcher(&mut state, cc.egui_ctx.clone(), path.clone());
+                (watcher, Some(path))
+            } else {
+                (None, None)
+            }
         } else {
-            None
+            (None, None)
         };
 
         // Initialize annotation popup with default color from config
@@ -369,7 +378,8 @@ impl MdViewApp {
 
         Self {
             state,
-            _watcher: watcher,
+            watcher,
+            watched_file,
             renderer,
             toc_panel: TocPanel::new(),
             annotation_popup,
@@ -387,6 +397,7 @@ impl MdViewApp {
             config_save_requested_at: None,
             is_dragging_file: false,
             pending_file_load: None,
+            selection_drag_anchor: None,
         }
     }
 
@@ -908,6 +919,120 @@ impl MdViewApp {
         }
     }
 
+    fn clear_file_watcher(&mut self) {
+        self.watcher = None;
+        self.watched_file = None;
+        self.state.file_event_rx = None;
+        self.state.file_event_tx = None;
+    }
+
+    fn floor_content_boundary(&self, offset: usize) -> Option<usize> {
+        let content = self.state.content.as_str();
+        if content.is_empty() {
+            return None;
+        }
+
+        let mut idx = offset.min(content.len());
+        while idx > 0 && !content.is_char_boundary(idx) {
+            idx -= 1;
+        }
+        Some(idx)
+    }
+
+    fn ceil_content_boundary(&self, offset: usize) -> Option<usize> {
+        let content = self.state.content.as_str();
+        if content.is_empty() {
+            return None;
+        }
+
+        let mut idx = offset.min(content.len());
+        while idx < content.len() && !content.is_char_boundary(idx) {
+            idx += 1;
+        }
+        Some(idx)
+    }
+
+    fn normalize_selection_range(&self, start: usize, end: usize) -> Option<(usize, usize)> {
+        if self.state.content.is_empty() {
+            return None;
+        }
+
+        let (raw_start, raw_end) = if start <= end { (start, end) } else { (end, start) };
+        let normalized_start = self.floor_content_boundary(raw_start)?;
+        let normalized_end = self.ceil_content_boundary(raw_end)?;
+        if normalized_end > normalized_start {
+            Some((normalized_start, normalized_end))
+        } else {
+            None
+        }
+    }
+
+    fn normalize_bookmark_offset(&self, offset: usize) -> Option<usize> {
+        let content = self.state.content.as_str();
+        if content.is_empty() {
+            return None;
+        }
+
+        let clamped = offset.min(content.len().saturating_sub(1));
+        self.floor_content_boundary(clamped)
+    }
+
+    /// Keep the file watcher in sync with the current file and hot-reload setting.
+    fn sync_file_watcher(&mut self, ctx: &egui::Context) {
+        if !self.state.config.general.hot_reload {
+            self.clear_file_watcher();
+            return;
+        }
+
+        let Some(path) = self.state.current_file.clone() else {
+            self.clear_file_watcher();
+            return;
+        };
+
+        if self.watched_file.as_ref() == Some(&path) {
+            // Already watching this file (or previous watch attempt for this file failed).
+            return;
+        }
+
+        self.watcher = setup_file_watcher(&mut self.state, ctx.clone(), path.clone());
+        self.watched_file = Some(path);
+        if self.watcher.is_none() {
+            self.state.set_status("Hot reload unavailable for this file");
+        }
+    }
+
+    /// Track a rough text selection range by mapping pointer drag positions to document offsets.
+    fn update_text_selection_from_pointer(&mut self, ctx: &egui::Context) {
+        let (pressed, down, released, pos) = ctx.input(|i| {
+            (
+                i.pointer.primary_pressed(),
+                i.pointer.primary_down(),
+                i.pointer.primary_released(),
+                i.pointer.interact_pos(),
+            )
+        });
+
+        if pressed {
+            self.selection_drag_anchor = pos
+                .and_then(|p| self.renderer.hit_test_char_offset(p))
+                .and_then(|offset| self.floor_content_boundary(offset));
+            self.state.text_selection = None;
+            return;
+        }
+
+        if down {
+            if let (Some(anchor), Some(pointer_pos)) = (self.selection_drag_anchor, pos) {
+                if let Some(current) = self.renderer.hit_test_char_offset(pointer_pos) {
+                    self.state.text_selection = self.normalize_selection_range(anchor, current);
+                }
+            }
+        }
+
+        if released {
+            self.selection_drag_anchor = None;
+        }
+    }
+
     fn apply_zoom_delta(&mut self, ctx: &egui::Context, delta: f32) -> bool {
         let old_size = self.state.config.theme.fonts.size;
         let new_size = (old_size + delta).clamp(8.0, 32.0);
@@ -1033,17 +1158,39 @@ impl MdViewApp {
         }
 
         if add_annotation && self.state.current_file.is_some() && !self.state.file_deleted {
-            // Show annotation popup at center of screen
-            let screen_rect = ctx.screen_rect();
-            let center = screen_rect.center();
-            // Estimate character offset from scroll position
-            let char_offset = self.estimate_char_offset_from_scroll();
-            self.annotation_popup.show(center, (char_offset, char_offset.saturating_add(100)));
+            let selection = self
+                .state
+                .text_selection
+                .and_then(|(start, end)| self.normalize_selection_range(start, end))
+                .or_else(|| {
+                    ctx.input(|i| i.pointer.hover_pos()).and_then(|pos| {
+                        self.renderer
+                            .hit_test_char_offset(pos)
+                            .and_then(|offset| {
+                                self.normalize_selection_range(offset, offset.saturating_add(1))
+                            })
+                    })
+                });
+
+            if let Some((start, end)) = selection {
+                let popup_pos = ctx
+                    .input(|i| i.pointer.interact_pos())
+                    .unwrap_or_else(|| ctx.screen_rect().center());
+                self.annotation_popup.show(popup_pos, (start, end));
+            } else {
+                self.state
+                    .set_status("Select text first, then add an annotation");
+            }
         }
 
         if add_bookmark && self.state.current_file.is_some() && !self.state.file_deleted {
-            // Add bookmark at current position
-            let char_offset = self.estimate_char_offset_from_scroll();
+            // Add bookmark at current cursor position when available.
+            let char_offset = ctx
+                .input(|i| i.pointer.hover_pos())
+                .and_then(|pos| self.renderer.hit_test_char_offset(pos))
+                .or_else(|| Some(self.estimate_char_offset_from_scroll()))
+                .and_then(|offset| self.normalize_bookmark_offset(offset))
+                .unwrap_or(0);
             self.handle_annotation_action(AnnotationAction::CreateBookmark(char_offset));
         }
 
@@ -1070,6 +1217,7 @@ impl MdViewApp {
         if escape {
             self.state.creating_annotation = false;
             self.state.text_selection = None;
+            self.selection_drag_anchor = None;
             self.annotation_popup.hide();
             self.toc_panel.clear_search();
         }
@@ -1085,7 +1233,10 @@ impl MdViewApp {
 
         for event in events {
             match event {
-                FileEvent::Modified => {
+                FileEvent::Modified(path) => {
+                    if self.state.current_file.as_ref() != Some(&path) {
+                        continue;
+                    }
                     if self.state.file_deleted {
                         // File was recreated after deletion
                         self.state.file_deleted = false;
@@ -1096,7 +1247,10 @@ impl MdViewApp {
                         self.state.set_status("File updated");
                     }
                 }
-                FileEvent::Removed => {
+                FileEvent::Removed(path) => {
+                    if self.state.current_file.as_ref() != Some(&path) {
+                        continue;
+                    }
                     // Mark file as deleted and show persistent warning
                     self.state.file_deleted = true;
                     self.state.set_status("The file was deleted or moved");
@@ -1660,7 +1814,7 @@ impl MdViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.state.config.general.hot_reload {
+                        if self.state.config.general.hot_reload && self.watcher.is_some() {
                             // Watching indicator with subtle dot
                             ui.horizontal(|ui| {
                                 ui.label(
@@ -2229,11 +2383,16 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str, is_dark: bo
     let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
     let text_disabled = if is_dark { palette::TEXT_DISABLED } else { palette::light::TEXT_DISABLED };
 
-    // Truncate directory path
-    let truncated_dir = if dir.len() > 50 {
-        format!("...{}", &dir[dir.len()-47..])
-    } else {
-        dir.to_string()
+    // Truncate directory path by character count (UTF-8 safe).
+    let truncated_dir = {
+        let char_count = dir.chars().count();
+        if char_count > 50 {
+            let tail_start = char_count.saturating_sub(47);
+            let tail: String = dir.chars().skip(tail_start).collect();
+            format!("...{}", tail)
+        } else {
+            dir.to_string()
+        }
     };
 
     let row_height = 44.0;
@@ -2295,6 +2454,7 @@ impl eframe::App for MdViewApp {
         #[cfg(windows)]
         self.init_native_menu_windows(frame);
 
+        self.sync_file_watcher(ctx);
         self.handle_file_events();
         self.handle_keyboard_shortcuts(ctx);
         self.handle_ctrl_scroll_zoom(ctx);
@@ -2336,6 +2496,7 @@ impl eframe::App for MdViewApp {
                 ctx.set_style(style);
             }
         }
+        self.sync_file_watcher(ctx);
 
         // Handle drag and drop with visual feedback
         let (is_dragging, dropped_file) = ctx.input(|i| {
@@ -2373,6 +2534,7 @@ impl eframe::App for MdViewApp {
                 if let Some(path) = self.pending_file_load.take() {
                     self.perform_file_load(path);
                     self.state.start_file_fade_in();
+                    self.sync_file_watcher(ctx);
                 }
             }
         }
@@ -2385,6 +2547,7 @@ impl eframe::App for MdViewApp {
         self.render_toc_sidebar(ctx);
         self.render_file_browser_sidebar(ctx);
         self.render_main_content(ctx);
+        self.update_text_selection_from_pointer(ctx);
 
         // Render annotation popup if visible
         if self.annotation_popup.visible {
@@ -2434,6 +2597,9 @@ impl eframe::App for MdViewApp {
             self.render_about_dialog(ctx);
         }
 
+        // Reconcile watcher state after any file/config changes made this frame.
+        self.sync_file_watcher(ctx);
+
         // Flush any pending config save after UI work is done
         self.flush_config_save_if_due();
     }
@@ -2461,8 +2627,8 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
     let mut fonts = egui::FontDefinitions::default();
 
     // Try to load custom fonts from config directory
-    let font_dir = directories::ProjectDirs::from("", "", "mdview")
-        .map(|dirs| dirs.config_dir().join("fonts"));
+    let font_dir = crate::config::loader::get_config_dir()
+        .map(|config_dir| config_dir.join("fonts"));
 
     // Load body font if specified and not default
     if config.theme.fonts.body != "sans-serif" {
@@ -2673,21 +2839,17 @@ fn get_system_font_paths() -> SystemFontPaths {
     paths
 }
 
-fn setup_file_watcher(state: &mut AppState, ctx: egui::Context) -> Option<FileWatcher> {
+fn setup_file_watcher(state: &mut AppState, ctx: egui::Context, path: PathBuf) -> Option<FileWatcher> {
     let (tx, rx) = mpsc::channel();
     state.file_event_tx = Some(tx.clone());
     state.file_event_rx = Some(rx);
 
-    if let Some(file_path) = &state.current_file {
-        match FileWatcher::new(file_path.clone(), tx, ctx) {
-            Ok(watcher) => Some(watcher),
-            Err(e) => {
-                log::error!("Failed to create file watcher: {}", e);
-                None
-            }
+    match FileWatcher::new(path, tx, ctx) {
+        Ok(watcher) => Some(watcher),
+        Err(e) => {
+            log::error!("Failed to create file watcher: {}", e);
+            None
         }
-    } else {
-        None
     }
 }
 
