@@ -21,7 +21,7 @@ cargo install mdview
 Or build from source:
 
 ```bash
-git clone https://github.com/mdview/mdview
+git clone https://github.com/rennerdo30/mdview
 cd mdview
 cargo build --release
 ```

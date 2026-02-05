@@ -69,7 +69,8 @@ pub mod palette {
 /// Create a refined egui Style
 pub fn create_style(theme_name: &str, config: &Config) -> Style {
     let mut style = Style::default();
-    let is_dark = theme_name.to_lowercase() != "light";
+    let normalized_theme = theme_name.trim().to_lowercase();
+    let is_dark = normalized_theme != "light";
 
     if is_dark {
         apply_dark_theme(&mut style, config);

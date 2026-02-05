@@ -565,6 +565,11 @@ impl AppState {
 
     /// Switch the current theme
     pub fn switch_theme(&mut self, theme_name: &str) {
+        let theme_name = theme_name.trim();
+        if theme_name.is_empty() {
+            return;
+        }
+
         let old_theme = self.config.general.theme.clone();
         self.config.general.theme = theme_name.to_string();
 

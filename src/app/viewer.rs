@@ -37,6 +37,7 @@ struct CachedKeybindings {
 
 /// Debounce duration for config writes
 const CONFIG_SAVE_DEBOUNCE_MS: u64 = 400;
+const REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
 
 impl CachedKeybindings {
     fn from_config(config: &crate::config::schema::KeybindingsConfig) -> Self {
@@ -607,6 +608,9 @@ impl MdViewApp {
     /// Render the About dialog
     fn render_about_dialog(&mut self, ctx: &egui::Context) {
         let mut should_close = false;
+        let mut should_open_repo = false;
+        let mut should_open_issues = false;
+        let issue_url = format!("{}/issues", REPOSITORY_URL.trim_end_matches('/'));
 
         egui::Window::new("About mdview")
             .collapsible(false)
@@ -656,11 +660,11 @@ impl MdViewApp {
                     // Links
                     ui.horizontal(|ui| {
                         if ui.link("GitHub").clicked() {
-                            let _ = open::that("https://github.com/mdview/mdview");
+                            should_open_repo = true;
                         }
                         ui.label(" | ");
                         if ui.link("Report Issue").clicked() {
-                            let _ = open::that("https://github.com/mdview/mdview/issues");
+                            should_open_issues = true;
                         }
                     });
 
@@ -674,6 +678,22 @@ impl MdViewApp {
 
                 ui.add_space(8.0);
             });
+
+        if should_open_repo {
+            if let Err(e) = open::that(REPOSITORY_URL) {
+                log::error!("Failed to open repository URL: {}", e);
+                self.state
+                    .set_status(format!("Could not open link: {}", e));
+            }
+        }
+
+        if should_open_issues {
+            if let Err(e) = open::that(&issue_url) {
+                log::error!("Failed to open issues URL: {}", e);
+                self.state
+                    .set_status(format!("Could not open link: {}", e));
+            }
+        }
 
         if should_close {
             self.show_about_dialog = false;
@@ -740,27 +760,13 @@ impl MdViewApp {
                     self.file_browser_visible = !self.file_browser_visible;
                 }
                 MenuAction::ZoomIn => {
-                    self.state.config.theme.fonts.size =
-                        (self.state.config.theme.fonts.size + 1.0).min(32.0);
-                    let style = create_style(self.state.current_theme(), &self.state.config);
-                    ctx.set_style(style);
-                    self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
-                    self.save_config_debounced(ctx);
+                    self.apply_zoom_delta(ctx, 1.0);
                 }
                 MenuAction::ZoomOut => {
-                    self.state.config.theme.fonts.size =
-                        (self.state.config.theme.fonts.size - 1.0).max(8.0);
-                    let style = create_style(self.state.current_theme(), &self.state.config);
-                    ctx.set_style(style);
-                    self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
-                    self.save_config_debounced(ctx);
+                    self.apply_zoom_delta(ctx, -1.0);
                 }
                 MenuAction::ZoomReset => {
-                    self.state.config.theme.fonts.size = 14.0;
-                    let style = create_style(self.state.current_theme(), &self.state.config);
-                    ctx.set_style(style);
-                    self.state.set_status("Zoom: Reset to default");
-                    self.save_config_debounced(ctx);
+                    self.reset_zoom(ctx);
                 }
                 MenuAction::About => {
                     self.show_about_dialog = true;
@@ -794,6 +800,53 @@ impl MdViewApp {
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str());
             menu.update_state(has_file, file_name);
+        }
+    }
+
+    fn apply_zoom_delta(&mut self, ctx: &egui::Context, delta: f32) -> bool {
+        let old_size = self.state.config.theme.fonts.size;
+        let new_size = (old_size + delta).clamp(8.0, 32.0);
+
+        if (new_size - old_size).abs() < f32::EPSILON {
+            return false;
+        }
+
+        self.state.config.theme.fonts.size = new_size;
+        let style = create_style(self.state.current_theme(), &self.state.config);
+        ctx.set_style(style);
+        self.state
+            .set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
+        self.save_config_debounced(ctx);
+        true
+    }
+
+    fn reset_zoom(&mut self, ctx: &egui::Context) {
+        self.state.config.theme.fonts.size = 14.0;
+        let style = create_style(self.state.current_theme(), &self.state.config);
+        ctx.set_style(style);
+        self.state.set_status("Zoom: Reset to default");
+        self.save_config_debounced(ctx);
+    }
+
+    fn handle_ctrl_scroll_zoom(&mut self, ctx: &egui::Context) {
+        let scroll_delta = ctx.input(|i| {
+            if i.modifiers.command {
+                i.raw_scroll_delta.y
+            } else {
+                0.0
+            }
+        });
+
+        if scroll_delta.abs() < f32::EPSILON {
+            return;
+        }
+
+        let direction = if scroll_delta > 0.0 { 1.0 } else { -1.0 };
+        let steps = (scroll_delta.abs() / 40.0).ceil().max(1.0) as usize;
+        for _ in 0..steps {
+            if !self.apply_zoom_delta(ctx, direction) {
+                break;
+            }
         }
     }
 
@@ -898,29 +951,15 @@ impl MdViewApp {
         }
 
         if zoom_in {
-            self.state.config.theme.fonts.size =
-                (self.state.config.theme.fonts.size + 1.0).min(32.0);
-            let style = create_style(self.state.current_theme(), &self.state.config);
-            ctx.set_style(style);
-            self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
-            self.save_config_debounced(ctx);
+            self.apply_zoom_delta(ctx, 1.0);
         }
 
         if zoom_out {
-            self.state.config.theme.fonts.size =
-                (self.state.config.theme.fonts.size - 1.0).max(8.0);
-            let style = create_style(self.state.current_theme(), &self.state.config);
-            ctx.set_style(style);
-            self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
-            self.save_config_debounced(ctx);
+            self.apply_zoom_delta(ctx, -1.0);
         }
 
         if zoom_reset {
-            self.state.config.theme.fonts.size = 14.0;
-            let style = create_style(self.state.current_theme(), &self.state.config);
-            ctx.set_style(style);
-            self.state.set_status("Zoom: Reset to default");
-            self.save_config_debounced(ctx);
+            self.reset_zoom(ctx);
         }
 
         if escape {
@@ -1315,8 +1354,9 @@ impl MdViewApp {
             });
 
             ui.menu_button("Theme", |ui| {
-                let dark_selected = current_theme.to_lowercase() == "dark";
-                let light_selected = current_theme.to_lowercase() == "light";
+                let normalized = current_theme.trim().to_lowercase();
+                let dark_selected = normalized == "dark";
+                let light_selected = normalized == "light";
 
                 if ui.selectable_label(dark_selected, "Dark").clicked() {
                     actions.new_theme = Some("dark".to_string());
@@ -1413,9 +1453,11 @@ impl MdViewApp {
         }
         if let Some(theme) = actions.new_theme {
             self.state.switch_theme(&theme);
-            let style = create_style(&theme, &self.state.config);
+            let style = create_style(self.state.current_theme(), &self.state.config);
             ctx.set_style(style);
-            self.state.set_status(format!("Switched to {} theme", theme));
+            self.state
+                .set_status(format!("Switched to {} theme", self.state.current_theme()));
+            self.save_config_debounced(ctx);
         }
         if let Some(width) = actions.new_reading_width {
             self.state.config.layout.content_width = width;
@@ -2140,6 +2182,7 @@ impl eframe::App for MdViewApp {
 
         self.handle_file_events();
         self.handle_keyboard_shortcuts(ctx);
+        self.handle_ctrl_scroll_zoom(ctx);
 
         // Poll for completed async mermaid renders and image loads
         self.renderer.poll_mermaid_renders(ctx);

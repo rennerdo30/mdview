@@ -10,7 +10,7 @@ use std::thread;
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// GitHub repository for releases
-const GITHUB_REPO: &str = "mdview/mdview";
+const GITHUB_REPO: &str = "rennerdo30/mdview";
 
 /// GitHub API endpoint for latest release
 fn releases_url() -> String {

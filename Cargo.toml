@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["mdview contributors"]
 description = "A fast, cross-platform GUI markdown viewer"
 license = "MIT"
-repository = "https://github.com/mdview/mdview"
+repository = "https://github.com/rennerdo30/mdview"
 keywords = ["markdown", "viewer", "gui", "egui"]
 categories = ["command-line-utilities", "gui", "text-processing"]
 

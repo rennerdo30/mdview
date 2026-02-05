@@ -138,6 +138,97 @@ const ESTIMATED_LINE_HEIGHT: f32 = 22.4;
 /// Slightly narrow to produce conservative (taller) height estimates — overestimates cause
 /// less visible layout shift than underestimates when blocks transition from culled to rendered.
 const ESTIMATED_CHAR_WIDTH: f32 = 7.0;
+const INLINE_CODE_MARKER: char = '\x00';
+const FOOTNOTE_MARKER: char = '\x01';
+const LINK_MARKER: char = '\x02';
+const LINK_END_MARKER: char = '\x03';
+
+/// Clamp an index down to the nearest valid UTF-8 boundary in `text`.
+/// Annotation offsets are byte-based, so this keeps slicing safe for non-ASCII content.
+fn floor_to_char_boundary(text: &str, index: usize) -> usize {
+    let mut clamped = index.min(text.len());
+    while clamped > 0 && !text.is_char_boundary(clamped) {
+        clamped -= 1;
+    }
+    clamped
+}
+
+/// Convert renderer control markers to plain text for contexts that do not render inline widgets
+/// (e.g. headings, blockquotes, table cells).
+fn strip_inline_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while !rest.is_empty() {
+        if let Some(code_part) = rest.strip_prefix("\x00CODE:") {
+            if let Some(end_idx) = code_part.find(INLINE_CODE_MARKER) {
+                out.push_str(&code_part[..end_idx]);
+                rest = &code_part[end_idx + INLINE_CODE_MARKER.len_utf8()..];
+                continue;
+            }
+        }
+
+        if let Some(fn_part) = rest.strip_prefix("\x01FN:") {
+            if let Some(end_idx) = fn_part.find(FOOTNOTE_MARKER) {
+                let payload = &fn_part[..end_idx];
+                if let Some((_name, num)) = payload.split_once(':') {
+                    out.push('[');
+                    out.push_str(num);
+                    out.push(']');
+                }
+                rest = &fn_part[end_idx + FOOTNOTE_MARKER.len_utf8()..];
+                continue;
+            }
+        }
+
+        if let Some(link_part) = rest.strip_prefix(LINK_MARKER) {
+            if let Some(url_end_idx) = link_part.find(LINK_MARKER) {
+                let after_url = &link_part[url_end_idx + LINK_MARKER.len_utf8()..];
+                if let Some(link_end_idx) = after_url.find(LINK_END_MARKER) {
+                    out.push_str(&after_url[..link_end_idx]);
+                    rest = &after_url[link_end_idx + LINK_END_MARKER.len_utf8()..];
+                    continue;
+                }
+            }
+        }
+
+        if let Some(ch) = rest.chars().next() {
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        } else {
+            break;
+        }
+    }
+
+    out
+}
+
+/// Find highlight color for a byte offset using sorted annotations.
+fn annotation_highlight_color(annotations: &[&Annotation], byte_pos: usize) -> Option<Color32> {
+    for ann in annotations {
+        if ann.start > byte_pos {
+            break;
+        }
+        if ann.kind == AnnotationKind::Highlight && ann.contains(byte_pos) {
+            let (r, g, b, _) = ann.get_color_rgba();
+            return Some(Color32::from_rgba_unmultiplied(r, g, b, 80));
+        }
+    }
+    None
+}
+
+/// Check whether a note annotation exists at a byte offset.
+fn annotation_has_note(annotations: &[&Annotation], byte_pos: usize) -> bool {
+    for ann in annotations {
+        if ann.start > byte_pos {
+            break;
+        }
+        if ann.kind == AnnotationKind::Note && ann.contains(byte_pos) {
+            return true;
+        }
+    }
+    false
+}
 
 /// A pre-computed block boundary in the event stream.
 /// Blocks represent top-level renderable elements (paragraphs, headings, code blocks, etc.)
@@ -467,6 +558,9 @@ pub struct MarkdownRenderer {
     /// Current document character offset for annotation tracking
     char_offset: usize,
 
+    /// Byte offset at the start of the current paragraph (for annotation ranges)
+    paragraph_start_offset: Option<usize>,
+
     /// Target heading index to scroll to (for TOC navigation)
     scroll_target: Option<usize>,
 
@@ -554,6 +648,7 @@ impl MarkdownRenderer {
             in_footnote_definition: false,
             footnote_counter: HashMap::new(),
             char_offset: 0,
+            paragraph_start_offset: None,
             scroll_target: None,
             heading_index: 0,
             table_count: 0,
@@ -1094,7 +1189,11 @@ impl MarkdownRenderer {
                             let next_num = self.footnote_counter.len() + 1;
                             *self.footnote_counter.entry(name.to_string()).or_insert(next_num)
                         };
-                        self.text_buffer.push_str(&format!("\x01FN:{}:{}\x01", name, num));
+                        if self.current_link.is_some() {
+                            self.text_buffer.push_str(&format!("[{}]", num));
+                        } else {
+                            self.text_buffer.push_str(&format!("\x01FN:{}:{}\x01", name, num));
+                        }
                     }
                     _ => {}
                 }
@@ -1145,6 +1244,7 @@ impl MarkdownRenderer {
         self.in_footnote_definition = false;
         self.footnote_counter.clear();
         self.char_offset = 0;
+        self.paragraph_start_offset = None;
         self.heading_index = 0;
         self.table_count = 0;
         self.code_block_count = 0;
@@ -1169,7 +1269,9 @@ impl MarkdownRenderer {
                 }
                 self.heading_index += 1;
             }
-            Tag::Paragraph => {}
+            Tag::Paragraph => {
+                self.paragraph_start_offset = Some(self.char_offset);
+            }
             Tag::BlockQuote(_) => {
                 self.in_blockquote = true;
             }
@@ -1198,6 +1300,9 @@ impl MarkdownRenderer {
             }
             Tag::Link { dest_url, .. } => {
                 self.current_link = Some(dest_url.to_string());
+                self.text_buffer.push(LINK_MARKER);
+                self.text_buffer.push_str(dest_url);
+                self.text_buffer.push(LINK_MARKER);
             }
             Tag::Image { dest_url, title, .. } => {
                 // Handle image rendering
@@ -1242,6 +1347,7 @@ impl MarkdownRenderer {
                     let code_text_color = config.theme.colors.code_text.as_ref().map(|c| parse_config_hex_color(c));
                     self.render_paragraph(ui, base_font_size, spacing, annotation_index, code_text_color);
                 }
+                self.paragraph_start_offset = None;
             }
             TagEnd::BlockQuote(_) => {
                 self.in_blockquote = false;
@@ -1271,7 +1377,7 @@ impl MarkdownRenderer {
                 self.in_strikethrough = false;
             }
             TagEnd::Link => {
-                self.render_link(ui, base_font_size);
+                self.text_buffer.push(LINK_END_MARKER);
                 self.current_link = None;
             }
             TagEnd::Table => {
@@ -1293,7 +1399,8 @@ impl MarkdownRenderer {
                 }
             }
             TagEnd::TableCell => {
-                self.table_row.push(std::mem::take(&mut self.text_buffer));
+                let cell = std::mem::take(&mut self.text_buffer);
+                self.table_row.push(strip_inline_markers(&cell));
             }
             _ => {}
         }
@@ -1305,13 +1412,23 @@ impl MarkdownRenderer {
         } else {
             self.text_buffer.push_str(text);
         }
+
+        // Keep byte offsets aligned with rendered/cull paths across all block types.
+        self.char_offset += text.len();
     }
 
     fn handle_inline_code(&mut self, code: &pulldown_cmark::CowStr<'_>) {
-        // Store inline code with markers for later rendering
-        self.text_buffer.push_str("\x00CODE:");
-        self.text_buffer.push_str(code);
-        self.text_buffer.push('\x00');
+        // If we're inside a link, keep inline code as plain link text so link tokens stay valid.
+        if self.current_link.is_some() {
+            self.text_buffer.push_str(code);
+        } else {
+            // Store inline code with markers for later rendering
+            self.text_buffer.push_str("\x00CODE:");
+            self.text_buffer.push_str(code);
+            self.text_buffer.push(INLINE_CODE_MARKER);
+        }
+
+        self.char_offset += code.len();
     }
 
     fn render_heading_with_config(
@@ -1321,7 +1438,7 @@ impl MarkdownRenderer {
         spacing: &crate::config::schema::SpacingConfig,
         heading_color: Option<Color32>,
     ) {
-        let text = std::mem::take(&mut self.text_buffer);
+        let text = strip_inline_markers(&std::mem::take(&mut self.text_buffer));
         if text.is_empty() {
             return;
         }
@@ -1387,29 +1504,115 @@ impl MarkdownRenderer {
             return;
         }
 
-        // Use byte length as a fast proxy for character offset tracking.
-        // This is O(1) vs O(n) for chars().count(). The offset is only used
-        // for annotation range overlap checks, so byte-level granularity is sufficient
-        // as long as we're consistent (annotations also use this same metric).
-        let text_len = text.len();
-        let start_offset = self.char_offset;
-        let end_offset = start_offset + text_len;
+        // Offsets are tracked while processing events (handle_text/handle_inline_code), so
+        // paragraph boundaries use the captured start and current offset here.
+        let start_offset = self.paragraph_start_offset.unwrap_or(self.char_offset);
+        let end_offset = self.char_offset;
 
         // Check if any annotations overlap with this text (O(log n) binary search)
         let overlapping = annotation_index.in_range(start_offset, end_offset);
+        let bookmark_count = overlapping
+            .iter()
+            .filter(|ann| ann.kind == AnnotationKind::Bookmark)
+            .count();
+
+        if bookmark_count > 0 {
+            let marker = if bookmark_count == 1 {
+                "🔖 Bookmark".to_string()
+            } else {
+                format!("🔖 {} bookmarks", bookmark_count)
+            };
+            let marker_color = if ui.visuals().dark_mode {
+                Color32::from_rgb(140, 180, 220)
+            } else {
+                Color32::from_rgb(70, 110, 150)
+            };
+            ui.label(
+                RichText::new(marker)
+                    .small()
+                    .italics()
+                    .color(marker_color),
+            );
+            ui.add_space(2.0);
+        }
 
         // Parse and render mixed content (text + inline code) with annotations
         // Annotations are already sorted from the index, no need to re-sort
         self.render_mixed_content_with_annotations(ui, &text, base_font_size, start_offset, &overlapping, code_text_color, self.in_strikethrough);
-
-        // Update character offset
-        self.char_offset = end_offset;
 
         ui.add_space(spacing.paragraph);
     }
 
     fn render_mixed_content(&self, ui: &mut Ui, text: &str, base_font_size: f32) {
         self.render_mixed_content_with_annotations(ui, text, base_font_size, 0, &[], None, self.in_strikethrough);
+    }
+
+    fn render_annotated_text_run(
+        &self,
+        ui: &mut Ui,
+        text: &str,
+        base_font_size: f32,
+        start_offset: usize,
+        annotations: &[&Annotation],
+        in_strikethrough: bool,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+
+        let end_offset = start_offset + text.len();
+        let mut boundaries = Vec::with_capacity(annotations.len() * 2 + 2);
+        boundaries.push(start_offset);
+        boundaries.push(end_offset);
+
+        for ann in annotations {
+            if ann.start > start_offset && ann.start < end_offset {
+                boundaries.push(ann.start);
+            }
+            if ann.end > start_offset && ann.end < end_offset {
+                boundaries.push(ann.end);
+            }
+        }
+
+        boundaries.sort_unstable();
+        boundaries.dedup();
+
+        for boundary_window in boundaries.windows(2) {
+            let run_start = boundary_window[0];
+            let run_end = boundary_window[1];
+            if run_end <= run_start {
+                continue;
+            }
+
+            let local_start = floor_to_char_boundary(text, run_start.saturating_sub(start_offset));
+            let local_end = floor_to_char_boundary(text, run_end.saturating_sub(start_offset));
+            if local_end <= local_start {
+                continue;
+            }
+
+            let run_text = &text[local_start..local_end];
+            if run_text.is_empty() {
+                continue;
+            }
+
+            let highlight = annotation_highlight_color(annotations, run_start);
+            let note_here = annotation_has_note(annotations, run_start);
+
+            let mut rich = RichText::new(run_text).size(base_font_size);
+            if let Some(bg_color) = highlight {
+                rich = rich.background_color(bg_color);
+            }
+            if note_here {
+                rich = rich.underline();
+                if highlight.is_none() {
+                    rich = rich.color(Color32::from_rgb(100, 149, 237));
+                }
+            }
+            if in_strikethrough {
+                rich = rich.strikethrough();
+            }
+            ui.label(rich);
+        }
     }
 
     fn render_mixed_content_with_annotations(
@@ -1423,7 +1626,10 @@ impl MarkdownRenderer {
         in_strikethrough: bool,
     ) {
         // Fast path: no annotations and no inline code or footnotes - use single label
-        let has_special_markers = text.contains('\x00') || text.contains('\x01');
+        let has_special_markers = text.contains(INLINE_CODE_MARKER)
+            || text.contains(FOOTNOTE_MARKER)
+            || text.contains(LINK_MARKER)
+            || text.contains(LINK_END_MARKER);
         if annotations.is_empty() && !has_special_markers && !in_strikethrough {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(text).size(base_font_size));
@@ -1432,9 +1638,13 @@ impl MarkdownRenderer {
         }
 
         // Fast path: no annotations, no footnotes, but has inline code - minimal processing
-        if annotations.is_empty() && !text.contains('\x01') {
+        if annotations.is_empty()
+            && !text.contains(FOOTNOTE_MARKER)
+            && !text.contains(LINK_MARKER)
+            && !text.contains(LINK_END_MARKER)
+        {
             ui.horizontal_wrapped(|ui| {
-                for part in text.split('\x00') {
+                for part in text.split(INLINE_CODE_MARKER) {
                     if let Some(code) = part.strip_prefix("CODE:") {
                         let text_color = code_text_color.unwrap_or(Color32::from_rgb(206, 145, 120));
                         let mut code_text = RichText::new(code)
@@ -1458,42 +1668,12 @@ impl MarkdownRenderer {
             return;
         }
 
-        // Annotations are already sorted by start position from AnnotationIndex
-        // No need to re-sort or re-filter
-
-        // Find highlight color for a given position using sorted annotations (early exit)
-        // Uses pre-parsed RGBA from Annotation to avoid parsing hex every frame
-        let get_highlight_color = |char_pos: usize| -> Option<Color32> {
-            for ann in annotations {
-                if ann.start > char_pos {
-                    break; // No more candidates (sorted by start)
-                }
-                if ann.kind == AnnotationKind::Highlight && ann.contains(char_pos) {
-                    let (r, g, b, _) = ann.get_color_rgba();
-                    return Some(Color32::from_rgba_unmultiplied(r, g, b, 80));
-                }
-            }
-            None
-        };
-
-        // Check if there's a note at this position
-        let has_note_at = |char_pos: usize| -> bool {
-            for ann in annotations {
-                if ann.start > char_pos {
-                    break;
-                }
-                if ann.kind == AnnotationKind::Note && ann.contains(char_pos) {
-                    return true;
-                }
-            }
-            false
-        };
-
         ui.horizontal_wrapped(|ui| {
             let mut current_offset = start_offset;
+            let is_dark = ui.visuals().dark_mode;
 
             // Split on inline code markers - use iterator directly (no allocation)
-            for part in text.split('\x00') {
+            for part in text.split(INLINE_CODE_MARKER) {
                 if let Some(code) = part.strip_prefix("CODE:") {
                     // Apply code_text color from config if specified, otherwise use default
                     let text_color = code_text_color.unwrap_or(Color32::from_rgb(206, 145, 120));
@@ -1509,7 +1689,7 @@ impl MarkdownRenderer {
                     current_offset += code.len();
                 } else if !part.is_empty() {
                     // Handle footnote references within the text - use iterator directly
-                    for fn_part in part.split('\x01') {
+                    for fn_part in part.split(FOOTNOTE_MARKER) {
                         if let Some(fn_ref) = fn_part.strip_prefix("FN:") {
                             // Format is "name:num"
                             if let Some((_name, num_str)) = fn_ref.split_once(':') {
@@ -1521,37 +1701,82 @@ impl MarkdownRenderer {
                                 ui.label(superscript);
                             }
                         } else if !fn_part.is_empty() {
-                            // Check if this text has a highlight annotation
-                            if let Some(bg_color) = get_highlight_color(current_offset) {
-                                let mut rich = RichText::new(fn_part)
-                                    .size(base_font_size)
-                                    .background_color(bg_color);
-                                // Add note indicator if there's a note
-                                if has_note_at(current_offset) {
-                                    rich = rich.underline();
+                            let mut remaining = fn_part;
+                            while !remaining.is_empty() {
+                                if let Some(link_start_idx) = remaining.find(LINK_MARKER) {
+                                    let before_link = &remaining[..link_start_idx];
+                                    if !before_link.is_empty() {
+                                        self.render_annotated_text_run(
+                                            ui,
+                                            before_link,
+                                            base_font_size,
+                                            current_offset,
+                                            annotations,
+                                            in_strikethrough,
+                                        );
+                                        current_offset += before_link.len();
+                                    }
+
+                                    let after_link_start =
+                                        &remaining[link_start_idx + LINK_MARKER.len_utf8()..];
+                                    if let Some(url_end_idx) = after_link_start.find(LINK_MARKER) {
+                                        let url = &after_link_start[..url_end_idx];
+                                        let after_url = &after_link_start
+                                            [url_end_idx + LINK_MARKER.len_utf8()..];
+                                        if let Some(link_end_idx) = after_url.find(LINK_END_MARKER) {
+                                            let link_text = &after_url[..link_end_idx];
+                                            if !link_text.is_empty() {
+                                                let mut link_rich = RichText::new(link_text)
+                                                    .size(base_font_size)
+                                                    .color(theme_colors::link_color(is_dark))
+                                                    .underline();
+                                                if let Some(bg) =
+                                                    annotation_highlight_color(annotations, current_offset)
+                                                {
+                                                    link_rich = link_rich.background_color(bg);
+                                                }
+                                                if in_strikethrough {
+                                                    link_rich = link_rich.strikethrough();
+                                                }
+                                                if ui.link(link_rich).clicked() {
+                                                    if let Err(e) = open::that(url) {
+                                                        log::error!("Failed to open link: {}", e);
+                                                    }
+                                                }
+                                                current_offset += link_text.len();
+                                            }
+
+                                            remaining =
+                                                &after_url[link_end_idx + LINK_END_MARKER.len_utf8()..];
+                                            continue;
+                                        }
+                                    }
+
+                                    // Malformed token fallback: render the rest as plain text.
+                                    let fallback = strip_inline_markers(remaining);
+                                    self.render_annotated_text_run(
+                                        ui,
+                                        &fallback,
+                                        base_font_size,
+                                        current_offset,
+                                        annotations,
+                                        in_strikethrough,
+                                    );
+                                    current_offset += fallback.len();
+                                    break;
                                 }
-                                if in_strikethrough {
-                                    rich = rich.strikethrough();
-                                }
-                                ui.label(rich);
-                            } else if has_note_at(current_offset) {
-                                // Just a note, no highlight - show with underline
-                                let mut rich = RichText::new(fn_part)
-                                    .size(base_font_size)
-                                    .underline()
-                                    .color(Color32::from_rgb(100, 149, 237));
-                                if in_strikethrough {
-                                    rich = rich.strikethrough();
-                                }
-                                ui.label(rich);
-                            } else {
-                                let mut rich = RichText::new(fn_part).size(base_font_size);
-                                if in_strikethrough {
-                                    rich = rich.strikethrough();
-                                }
-                                ui.label(rich);
+
+                                self.render_annotated_text_run(
+                                    ui,
+                                    remaining,
+                                    base_font_size,
+                                    current_offset,
+                                    annotations,
+                                    in_strikethrough,
+                                );
+                                current_offset += remaining.len();
+                                break;
                             }
-                            current_offset += fn_part.len();
                         }
                     }
                 }
@@ -1560,7 +1785,7 @@ impl MarkdownRenderer {
     }
 
     fn render_blockquote(&mut self, ui: &mut Ui, base_font_size: f32) {
-        let text = std::mem::take(&mut self.text_buffer);
+        let text = strip_inline_markers(&std::mem::take(&mut self.text_buffer));
         if text.is_empty() {
             return;
         }
@@ -2403,25 +2628,6 @@ impl MarkdownRenderer {
         });
     }
 
-    fn render_link(&mut self, ui: &mut Ui, base_font_size: f32) {
-        let text = std::mem::take(&mut self.text_buffer);
-        let url = self.current_link.clone().unwrap_or_default();
-
-        if !text.is_empty() {
-            let is_dark = ui.visuals().dark_mode;
-            let link_text = RichText::new(&text)
-                .size(base_font_size)
-                .color(theme_colors::link_color(is_dark))
-                .underline();
-
-            if ui.link(link_text).clicked() {
-                if let Err(e) = open::that(&url) {
-                    log::error!("Failed to open link: {}", e);
-                }
-            }
-        }
-    }
-
     fn render_table(&mut self, ui: &mut Ui, base_font_size: f32) {
         if self.table_header.is_empty() && self.table_rows.is_empty() {
             return;
@@ -3219,5 +3425,17 @@ mod tests {
         }
 
         assert!(total_events_in_blocks > 0);
+    }
+
+    #[test]
+    fn test_strip_inline_markers_code_and_footnote() {
+        let input = "Hello \x00CODE:world\x00 and \x01FN:id:3\x01!";
+        assert_eq!(strip_inline_markers(input), "Hello world and [3]!");
+    }
+
+    #[test]
+    fn test_strip_inline_markers_link() {
+        let input = "Go to \x02https://example.com\x02Example\x03 now";
+        assert_eq!(strip_inline_markers(input), "Go to Example now");
     }
 }

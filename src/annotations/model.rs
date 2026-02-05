@@ -144,12 +144,22 @@ impl Annotation {
 
     /// Check if annotation overlaps with a range
     pub fn overlaps(&self, start: usize, end: usize) -> bool {
-        self.start < end && self.end > start
+        if self.start == self.end {
+            // Zero-length annotations (e.g. bookmarks) overlap when their point is in range.
+            self.start >= start && self.start < end
+        } else {
+            self.start < end && self.end > start
+        }
     }
 
     /// Check if annotation contains a position
     pub fn contains(&self, pos: usize) -> bool {
-        pos >= self.start && pos < self.end
+        if self.start == self.end {
+            // Zero-length annotations represent a point location.
+            pos == self.start
+        } else {
+            pos >= self.start && pos < self.end
+        }
     }
 
     /// Update the note text
@@ -375,5 +385,23 @@ mod tests {
         assert!(ann.overlaps(12, 18));
         assert!(!ann.overlaps(0, 10));
         assert!(!ann.overlaps(20, 30));
+    }
+
+    #[test]
+    fn test_bookmark_point_overlap() {
+        let bookmark = Annotation::bookmark(42);
+
+        assert!(bookmark.overlaps(40, 50));
+        assert!(!bookmark.overlaps(0, 42));
+        assert!(!bookmark.overlaps(43, 100));
+    }
+
+    #[test]
+    fn test_bookmark_contains_exact_position() {
+        let bookmark = Annotation::bookmark(42);
+
+        assert!(bookmark.contains(42));
+        assert!(!bookmark.contains(41));
+        assert!(!bookmark.contains(43));
     }
 }
