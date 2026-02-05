@@ -246,36 +246,38 @@ impl FileBrowserPanel {
             ui.add_space(4.0);
         }
 
-        // Collect visible entries data (clone to avoid borrow issues)
-        let entries_data: Vec<(PathBuf, String, bool, usize, bool)> = folder_state
-            .visible_entries()
-            .iter()
-            .map(|e| {
-                let is_expanded = folder_state.is_expanded(&e.path);
-                (e.path.clone(), e.name.clone(), e.is_dir, e.depth, is_expanded)
-            })
-            .collect();
-
         // File list
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                for (idx, (path, name, is_dir, depth, is_expanded)) in entries_data.iter().enumerate() {
-                    let is_current = current_file
-                        .map(|f| f == path.as_path())
-                        .unwrap_or(false);
+        {
+            let visible_entries = folder_state.visible_entries();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for (idx, entry) in visible_entries.iter().enumerate() {
+                        let is_expanded = folder_state.is_expanded(&entry.path);
+                        let is_current = current_file
+                            .map(|f| f == entry.path.as_path())
+                            .unwrap_or(false);
 
-                    let response = self.render_entry_data(ui, name, *is_dir, *depth, *is_expanded, idx, is_current);
+                        let response = self.render_entry_data(
+                            ui,
+                            &entry.name,
+                            entry.is_dir,
+                            entry.depth,
+                            is_expanded,
+                            idx,
+                            is_current,
+                        );
 
-                    if response.clicked() {
-                        if *is_dir {
-                            dir_to_toggle = Some(path.clone());
-                        } else {
-                            file_to_open = Some(path.clone());
+                        if response.clicked() {
+                            if entry.is_dir {
+                                dir_to_toggle = Some(entry.path.clone());
+                            } else {
+                                file_to_open = Some(entry.path.clone());
+                            }
                         }
                     }
-                }
-            });
+                });
+        }
 
         // Apply mutations after UI rendering
         if should_close {

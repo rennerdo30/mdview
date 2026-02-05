@@ -242,11 +242,14 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                         _ => { i += 1; }
                     }
                 }
-                let num_lines = text_len.to_string().len().max(
-                    events[start + 1..i].iter().filter(|e| matches!(e, Event::Text(_))).map(|e| {
-                        if let Event::Text(t) = e { t.lines().count() } else { 0 }
-                    }).sum::<usize>()
-                ).max(1);
+                let num_lines = events[start + 1..i]
+                    .iter()
+                    .filter_map(|e| match e {
+                        Event::Text(t) => Some(t.lines().count()),
+                        _ => None,
+                    })
+                    .sum::<usize>()
+                    .max(1);
                 let height = num_lines as f32 * ESTIMATED_LINE_HEIGHT + 32.0; // padding + margins
                 blocks.push(ContentBlock {
                     event_start: start,
@@ -3105,7 +3108,14 @@ mod tests {
 
         assert_eq!(blocks.len(), 1);
         assert!(!blocks[0].is_heading);
-        assert!(blocks[0].estimated_height > 0.0);
+        // 3 lines of code + fixed code-block padding/margins
+        let expected_height = 3.0 * ESTIMATED_LINE_HEIGHT + 32.0;
+        assert!(
+            (blocks[0].estimated_height - expected_height).abs() < 0.001,
+            "expected {}, got {}",
+            expected_height,
+            blocks[0].estimated_height
+        );
     }
 
     #[test]

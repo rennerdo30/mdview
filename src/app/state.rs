@@ -168,7 +168,7 @@ pub struct AppState {
 
     /// Cached recent files for menu/welcome screen (avoids per-frame allocation)
     /// Contains (path, display_name, parent_dir) tuples
-    cached_recent_files: Option<Vec<(PathBuf, String, String)>>,
+    cached_recent_files: Option<Arc<Vec<(PathBuf, String, String)>>>,
 
     /// Cached config hash for efficient cache validation (avoids recomputing every frame)
     cached_config_hash: u64,
@@ -443,7 +443,13 @@ impl AppState {
             self.call_plugin_hook_with_path(crate::plugin::api::PluginHook::OnFileClose, prev_path);
         }
 
-        let content = std::fs::read_to_string(&path)?;
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(e) => {
+                self.is_loading = false;
+                return Err(e);
+            }
+        };
         let content_hash = compute_content_hash(&content);
 
         // Parse markdown events once and reuse for TOC (avoids duplicate parsing)
@@ -732,7 +738,7 @@ impl AppState {
 
     /// Get cached recent files list for menu and welcome screen
     /// This avoids rebuilding the Vec twice per frame with String allocations
-    pub fn get_cached_recent_files(&mut self) -> &[(PathBuf, String, String)] {
+    pub fn get_cached_recent_files(&mut self) -> Arc<Vec<(PathBuf, String, String)>> {
         if self.cached_recent_files.is_none() {
             let files: Vec<_> = self.recent_files
                 .get_existing()
@@ -743,9 +749,9 @@ impl AppState {
                     f.path.parent().and_then(|p| p.to_str()).unwrap_or("").to_string(),
                 ))
                 .collect();
-            self.cached_recent_files = Some(files);
+            self.cached_recent_files = Some(Arc::new(files));
         }
-        self.cached_recent_files.as_ref().unwrap()
+        Arc::clone(self.cached_recent_files.as_ref().unwrap())
     }
 
     /// Invalidate the cached recent files (call after adding/removing files)

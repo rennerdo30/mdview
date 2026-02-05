@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Key, Modifiers, Rounding, Stroke, Vec2};
 
@@ -33,6 +34,9 @@ struct CachedKeybindings {
     zoom_out: Option<ParsedKeybinding>,
     zoom_reset: Option<ParsedKeybinding>,
 }
+
+/// Debounce duration for config writes
+const CONFIG_SAVE_DEBOUNCE_MS: u64 = 400;
 
 impl CachedKeybindings {
     fn from_config(config: &crate::config::schema::KeybindingsConfig) -> Self {
@@ -283,6 +287,8 @@ pub struct MdViewApp {
     cached_is_default_handler: Option<bool>,
     /// Cached keybindings parsed at startup (avoid parsing every frame)
     cached_keybindings: CachedKeybindings,
+    /// Last time a config save was requested (for debouncing)
+    config_save_requested_at: Option<Instant>,
     /// Whether a file is being dragged over the window (for visual feedback)
     is_dragging_file: bool,
     /// Pending file path to load after fade-out transition completes
@@ -373,6 +379,7 @@ impl MdViewApp {
             native_menu: None,
             cached_is_default_handler: None,
             cached_keybindings,
+            config_save_requested_at: None,
             is_dragging_file: false,
             pending_file_load: None,
         }
@@ -738,7 +745,7 @@ impl MdViewApp {
                     let style = create_style(self.state.current_theme(), &self.state.config);
                     ctx.set_style(style);
                     self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
-                    self.save_config_debounced();
+                    self.save_config_debounced(ctx);
                 }
                 MenuAction::ZoomOut => {
                     self.state.config.theme.fonts.size =
@@ -746,14 +753,14 @@ impl MdViewApp {
                     let style = create_style(self.state.current_theme(), &self.state.config);
                     ctx.set_style(style);
                     self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
-                    self.save_config_debounced();
+                    self.save_config_debounced(ctx);
                 }
                 MenuAction::ZoomReset => {
                     self.state.config.theme.fonts.size = 14.0;
                     let style = create_style(self.state.current_theme(), &self.state.config);
                     ctx.set_style(style);
                     self.state.set_status("Zoom: Reset to default");
-                    self.save_config_debounced();
+                    self.save_config_debounced(ctx);
                 }
                 MenuAction::About => {
                     self.show_about_dialog = true;
@@ -769,7 +776,7 @@ impl MdViewApp {
                         Some(w) => format!("{}px", w as i32),
                     };
                     self.state.set_status(format!("Reading width: {}", width_desc));
-                    self.save_config_debounced();
+                    self.save_config_debounced(ctx);
                 }
             }
         }
@@ -896,7 +903,7 @@ impl MdViewApp {
             let style = create_style(self.state.current_theme(), &self.state.config);
             ctx.set_style(style);
             self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
-            self.save_config_debounced();
+            self.save_config_debounced(ctx);
         }
 
         if zoom_out {
@@ -905,7 +912,7 @@ impl MdViewApp {
             let style = create_style(self.state.current_theme(), &self.state.config);
             ctx.set_style(style);
             self.state.set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
-            self.save_config_debounced();
+            self.save_config_debounced(ctx);
         }
 
         if zoom_reset {
@@ -913,7 +920,7 @@ impl MdViewApp {
             let style = create_style(self.state.current_theme(), &self.state.config);
             ctx.set_style(style);
             self.state.set_status("Zoom: Reset to default");
-            self.save_config_debounced();
+            self.save_config_debounced(ctx);
         }
 
         if escape {
@@ -1113,7 +1120,23 @@ impl MdViewApp {
     }
 
     /// Save config to disk (for persisting changes like zoom level)
-    fn save_config_debounced(&self) {
+    fn save_config_debounced(&mut self, ctx: &egui::Context) {
+        self.config_save_requested_at = Some(Instant::now());
+        ctx.request_repaint_after(Duration::from_millis(CONFIG_SAVE_DEBOUNCE_MS));
+    }
+
+    fn flush_config_save_if_due(&mut self) {
+        let Some(requested_at) = self.config_save_requested_at else {
+            return;
+        };
+
+        if requested_at.elapsed() >= Duration::from_millis(CONFIG_SAVE_DEBOUNCE_MS) {
+            self.save_config_now();
+            self.config_save_requested_at = None;
+        }
+    }
+
+    fn save_config_now(&self) {
         if let Some(config_path) = crate::config::loader::get_default_config_path() {
             if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
                 log::warn!("Failed to save config: {}", e);
@@ -1122,13 +1145,7 @@ impl MdViewApp {
     }
 
     fn render_menu_bar(&mut self, ctx: &egui::Context) {
-        // Use cached recent files to avoid per-frame allocation
-        let recent_files: Vec<_> = self
-            .state
-            .get_cached_recent_files()
-            .iter()
-            .map(|(path, name, _)| (path.clone(), name.clone()))
-            .collect();
+        let recent_files = self.state.get_cached_recent_files();
 
         let mut actions = MenuActions::default();
         let current_theme = self.state.current_theme().to_string();
@@ -1150,7 +1167,7 @@ impl MdViewApp {
                 .inner_margin(egui::Margin::symmetric(12.0, 6.0)))
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
-                    Self::render_file_menu(ui, &recent_files, &mut actions);
+                    Self::render_file_menu(ui, recent_files.as_slice(), &mut actions);
                     Self::render_view_menu(ui, &current_theme, folder_is_open, toc_visible, file_browser_visible, self.state.config.layout.content_width, &mut actions);
 
                     // Plugins menu (only if plugins feature enabled and items registered)
@@ -1174,7 +1191,11 @@ impl MdViewApp {
         self.handle_menu_actions(ctx, actions);
     }
 
-    fn render_file_menu(ui: &mut egui::Ui, recent_files: &[(PathBuf, String)], actions: &mut MenuActions) {
+    fn render_file_menu(
+        ui: &mut egui::Ui,
+        recent_files: &[(PathBuf, String, String)],
+        actions: &mut MenuActions,
+    ) {
         ui.menu_button("File", |ui| {
             let open_file_label = format!("Open File...      {}", shortcuts::format("O"));
             if ui.button(&open_file_label).clicked() {
@@ -1192,7 +1213,7 @@ impl MdViewApp {
                 if recent_files.is_empty() {
                     ui.label(egui::RichText::new("No recent files").italics().weak());
                 } else {
-                    for (path, name) in recent_files {
+                    for (path, name, _dir) in recent_files {
                         if ui.button(name).on_hover_text(path.display().to_string()).clicked() {
                             actions.file_to_open = Some(path.clone());
                             ui.close_menu();
@@ -1355,10 +1376,20 @@ impl MdViewApp {
             self.open_folder_dialog();
         }
         if actions.reload {
-            let _ = self.state.reload_file();
+            if self.state.file_deleted {
+                self.state.set_status("Cannot reload: the file was deleted");
+            } else if let Err(e) = self.state.reload_file() {
+                self.state.set_status(friendly_errors::format_reload_error(&e));
+            } else {
+                self.state.set_status("File reloaded");
+            }
         }
         if actions.export_pdf {
-            self.export_pdf();
+            if self.state.file_deleted {
+                self.state.set_status("Cannot export: file was deleted");
+            } else {
+                self.export_pdf();
+            }
         }
         if actions.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1393,12 +1424,7 @@ impl MdViewApp {
                 Some(w) => format!("{}px", w as i32),
             };
             self.state.set_status(format!("Reading width: {}", width_desc));
-            // Save config
-            if let Some(config_path) = crate::config::loader::get_default_config_path() {
-                if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
-                    log::error!("Failed to save config: {}", e);
-                }
-            }
+            self.save_config_debounced(ctx);
         }
         if actions.edit_config {
             self.handle_edit_config();
@@ -1624,12 +1650,6 @@ impl MdViewApp {
         let is_dark = ctx.style().visuals.dark_mode;
         let main_bg = if is_dark { palette::BG_BASE } else { palette::light::BG_BASE };
 
-        // Use cached recent files to avoid per-frame allocation
-        let recent_files: Vec<_> = self
-            .state
-            .get_cached_recent_files()
-            .to_vec();
-
         let mut file_to_open: Option<PathBuf> = None;
 
         egui::CentralPanel::default()
@@ -1661,7 +1681,8 @@ impl MdViewApp {
 
                 if self.state.content.is_empty() {
                     // Refined welcome screen
-                    render_welcome_screen(ui, &recent_files, &mut file_to_open, is_dark);
+                    let recent_files = self.state.get_cached_recent_files();
+                    render_welcome_screen(ui, recent_files.as_slice(), &mut file_to_open, is_dark);
                     return;
                 }
 
@@ -1681,7 +1702,7 @@ impl MdViewApp {
                 heading_positions.clear();
                 let scroll_target = self.state.scroll_to_heading.take();
 
-                egui::ScrollArea::vertical()
+                let scroll_output = egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.add_space(32.0);
@@ -1704,7 +1725,8 @@ impl MdViewApp {
                         ui.add_space(64.0);
                     });
 
-                let scroll_offset = ui.clip_rect().top();
+                let scroll_offset = scroll_output.state.offset.y;
+                let viewport_top = scroll_output.inner_rect.top();
                 self.state.heading_positions = heading_positions;
                 self.state.scroll_offset = scroll_offset;
 
@@ -1713,21 +1735,29 @@ impl MdViewApp {
                 let total_chars = self.renderer.current_char_offset();
                 if total_chars > 0 {
                     // Estimate visible range based on scroll position ratio
-                    // This gives us a much better estimate than the previous heuristic
                     let content_len = self.state.content.len();
                     if content_len > 0 {
-                        let ratio = (scroll_offset / scroll_offset.max(1.0)).clamp(0.0, 1.0);
+                        let max_scroll = (scroll_output.content_size.y - scroll_output.inner_rect.height())
+                            .max(1.0);
+                        let ratio = (scroll_offset / max_scroll).clamp(0.0, 1.0);
                         let start = (ratio * content_len as f32) as usize;
-                        // Visible window is approximately one screen worth
-                        let visible_chars = content_len / 10; // ~10% of document per screen
-                        let end = (start + visible_chars).min(content_len);
+                        let visible_fraction = if scroll_output.content_size.y > 0.0 {
+                            (scroll_output.inner_rect.height() / scroll_output.content_size.y)
+                                .clamp(0.0, 1.0)
+                        } else {
+                            0.1
+                        };
+                        let visible_chars = ((content_len as f32) * visible_fraction).ceil() as usize;
+                        let end = (start + visible_chars.max(1)).min(content_len);
                         self.state.visible_char_range = Some((start, end));
                     }
+                } else {
+                    self.state.visible_char_range = None;
                 }
 
                 // Use binary search to find current heading (O(log n) instead of O(n))
-                // Find the last heading position that is <= scroll_offset + 50.0
-                let target = scroll_offset + 50.0;
+                // Find the last heading position that is <= viewport_top + 50.0
+                let target = viewport_top + 50.0;
                 let current_idx = if self.state.heading_positions.is_empty() {
                     None
                 } else {
@@ -1906,7 +1936,8 @@ fn render_welcome_screen(
         ui.horizontal(|ui| {
             ui.add_space((available_size.x - 300.0) / 2.0);
             ui.vertical(|ui| {
-                render_action_hint(ui, "⌘O", "Open file", is_dark);
+                let open_shortcut = shortcuts::format("O");
+                render_action_hint(ui, &open_shortcut, "Open file", is_dark);
                 ui.add_space(8.0);
                 render_action_hint(ui, "drag", "Drop a file here", is_dark);
             });
@@ -2239,6 +2270,9 @@ impl eframe::App for MdViewApp {
         if self.show_about_dialog {
             self.render_about_dialog(ctx);
         }
+
+        // Flush any pending config save after UI work is done
+        self.flush_config_save_if_due();
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -2252,6 +2286,10 @@ impl eframe::App for MdViewApp {
             log::error!("Failed to save annotations on exit: {}", e);
             // Note: Can't show UI dialog here as context is being destroyed
             // The error is logged for debugging purposes
+        }
+
+        if self.config_save_requested_at.is_some() {
+            self.save_config_now();
         }
     }
 }
