@@ -48,6 +48,13 @@ impl TocColors {
     }
 }
 
+#[derive(Clone, Copy)]
+struct VisibleRow {
+    index: usize,
+    depth: usize,
+    has_children: bool,
+}
+
 /// Check if a heading text matches the search query (case-insensitive substring)
 fn matches_search(text: &str, query: &str) -> bool {
     if query.is_empty() {
@@ -163,8 +170,18 @@ impl TocPanel {
             Some(matches)
         };
 
-        // Get flat list of visible entry indices for keyboard navigation
-        let visible_indices = self.get_visible_indices(toc);
+        // Build visible rows for virtualized rendering in the common no-filter case.
+        let mut visible_rows: Option<Vec<VisibleRow>> = None;
+        let visible_indices = if matching_indices.is_none() {
+            let mut rows = Vec::new();
+            self.collect_visible_rows(&toc.entries, 0, &mut rows);
+            let indices = rows.iter().map(|row| row.index).collect();
+            visible_rows = Some(rows);
+            indices
+        } else {
+            // Keep recursive rendering path while filtering to preserve match/ancestor behavior.
+            self.get_visible_indices(toc)
+        };
 
         // Handle keyboard navigation
         if self.has_focus {
@@ -192,18 +209,57 @@ impl TocPanel {
             self.has_focus = false;
         }
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.add_space(4.0);
-                for entry in &toc.entries {
-                    if let Some(idx) = self.render_entry(ui, entry, current_heading, self.focused_index, 0, &colors, matching_indices.as_deref()) {
-                        clicked = Some(idx);
-                        self.focused_index = Some(idx);
+        if let Some(rows) = visible_rows.as_ref() {
+            // Virtualized list: render only visible TOC rows for smoother scrolling.
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(ui, 28.0, rows.len(), |ui, row_range| {
+                    for row_idx in row_range {
+                        let Some(row) = rows.get(row_idx) else {
+                            continue;
+                        };
+                        let Some(entry) = toc.get(row.index) else {
+                            continue;
+                        };
+
+                        if let Some(idx) = self.render_visible_row(
+                            ui,
+                            entry,
+                            row.depth,
+                            row.has_children,
+                            current_heading,
+                            self.focused_index,
+                            &colors,
+                        ) {
+                            clicked = Some(idx);
+                            self.focused_index = Some(idx);
+                        }
                     }
-                }
-                ui.add_space(16.0);
-            });
+                });
+        } else {
+            // Filter mode keeps the recursive renderer so descendants can stay visible
+            // when only ancestors/children match the query.
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_space(4.0);
+                    for entry in &toc.entries {
+                        if let Some(idx) = self.render_entry(
+                            ui,
+                            entry,
+                            current_heading,
+                            self.focused_index,
+                            0,
+                            &colors,
+                            matching_indices.as_deref(),
+                        ) {
+                            clicked = Some(idx);
+                            self.focused_index = Some(idx);
+                        }
+                    }
+                    ui.add_space(16.0);
+                });
+        }
 
         clicked
     }
@@ -247,6 +303,130 @@ impl TocPanel {
                 self.collect_visible_indices(&entry.children, indices);
             }
         }
+    }
+
+    fn collect_visible_rows(&self, entries: &[TocEntry], depth: usize, rows: &mut Vec<VisibleRow>) {
+        for entry in entries {
+            let has_children = !entry.children.is_empty();
+            rows.push(VisibleRow {
+                index: entry.index,
+                depth,
+                has_children,
+            });
+
+            let collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
+            if has_children && !collapsed {
+                self.collect_visible_rows(&entry.children, depth + 1, rows);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_visible_row(
+        &mut self,
+        ui: &mut Ui,
+        entry: &TocEntry,
+        depth: usize,
+        has_children: bool,
+        current_heading: Option<usize>,
+        focused_index: Option<usize>,
+        colors: &TocColors,
+    ) -> Option<usize> {
+        let mut clicked = None;
+        let base_indent = 16.0;
+        let indent = base_indent + (depth as f32 * 12.0);
+        let is_current = current_heading == Some(entry.index);
+        let is_focused = focused_index == Some(entry.index);
+        let mut collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
+        let item_height = 28.0;
+
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new(ui.available_width(), item_height),
+            egui::Sense::click(),
+        );
+
+        let is_hovered = response.hovered();
+        if is_current {
+            let indicator_rect = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, item_height));
+            ui.painter()
+                .rect_filled(indicator_rect, Rounding::ZERO, colors.accent);
+            ui.painter().rect_filled(rect, Rounding::ZERO, colors.bg_hover);
+        } else if is_focused {
+            ui.painter().rect_stroke(
+                rect.shrink(1.0),
+                Rounding::same(2.0),
+                egui::Stroke::new(1.0, colors.accent),
+            );
+            ui.painter()
+                .rect_filled(rect, Rounding::ZERO, colors.bg_elevated);
+        } else if is_hovered {
+            ui.painter()
+                .rect_filled(rect, Rounding::ZERO, colors.bg_elevated);
+        }
+
+        if has_children {
+            let toggle_text = if collapsed { "\u{25B6}" } else { "\u{25BC}" };
+            let toggle_pos = rect.min + Vec2::new(indent - 14.0, item_height / 2.0);
+            let toggle_rect = egui::Rect::from_center_size(toggle_pos, Vec2::splat(16.0));
+            let toggle_response =
+                ui.interact(toggle_rect, ui.id().with(("toggle", entry.index)), egui::Sense::click());
+
+            let toggle_color = if toggle_response.hovered() {
+                colors.text_primary
+            } else {
+                colors.text_muted
+            };
+
+            ui.painter().text(
+                toggle_pos,
+                egui::Align2::CENTER_CENTER,
+                toggle_text,
+                egui::FontId::proportional(11.0),
+                toggle_color,
+            );
+
+            if toggle_response.clicked() {
+                collapsed = !collapsed;
+                if let Some(c) = self.collapsed.get_mut(entry.index) {
+                    *c = collapsed;
+                }
+                self.cached_visible_indices = None;
+            }
+        }
+
+        let text_color = if is_current {
+            colors.accent
+        } else if is_hovered {
+            colors.text_primary
+        } else {
+            colors.text_secondary
+        };
+
+        let font_size = match entry.level {
+            1 => 13.0,
+            2 => 12.5,
+            _ => 12.0,
+        };
+        let max_text_width = rect.width() - indent - 16.0;
+        let text = truncate_text(&entry.text, max_text_width, font_size);
+
+        ui.painter().text(
+            rect.min + Vec2::new(indent, item_height / 2.0),
+            egui::Align2::LEFT_CENTER,
+            &text,
+            egui::FontId::proportional(font_size),
+            text_color,
+        );
+
+        if response.clicked() {
+            clicked = Some(entry.index);
+        }
+
+        if text != entry.text {
+            response.on_hover_text(&entry.text);
+        }
+
+        clicked
     }
 
     /// Handle keyboard navigation, returns Some(index) if Enter was pressed on an entry

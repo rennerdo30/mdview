@@ -977,6 +977,54 @@ impl MdViewApp {
         self.floor_content_boundary(clamped)
     }
 
+    fn handle_right_click_annotation(&mut self, ctx: &egui::Context) {
+        if self.annotation_popup.visible
+            || self.state.current_file.is_none()
+            || self.state.file_deleted
+            || self.state.content.is_empty()
+        {
+            return;
+        }
+
+        let (secondary_clicked, hover_pos, interact_pos) = ctx.input(|i| {
+            (
+                i.pointer.secondary_clicked(),
+                i.pointer.hover_pos(),
+                i.pointer.interact_pos(),
+            )
+        });
+
+        if !secondary_clicked {
+            return;
+        }
+
+        let pointer_offset = hover_pos.and_then(|pos| self.renderer.hit_test_char_offset(pos));
+        let stored_selection = self
+            .state
+            .text_selection
+            .and_then(|(start, end)| self.normalize_selection_range(start, end));
+
+        let selection = match (stored_selection, pointer_offset) {
+            (Some((start, end)), Some(offset)) if offset >= start && offset < end => {
+                Some((start, end))
+            }
+            (_, Some(offset)) => {
+                self.normalize_selection_range(offset, offset.saturating_add(1))
+            }
+            (Some((start, end)), None) => Some((start, end)),
+            (None, None) => None,
+        };
+
+        if let Some((start, end)) = selection {
+            let popup_pos = interact_pos
+                .or(hover_pos)
+                .unwrap_or_else(|| ctx.screen_rect().center());
+            self.annotation_popup.show(popup_pos, (start, end));
+        } else {
+            self.state.set_status("Right-click on text to annotate");
+        }
+    }
+
     /// Keep the file watcher in sync with the current file and hot-reload setting.
     fn sync_file_watcher(&mut self, ctx: &egui::Context) {
         if !self.state.config.general.hot_reload {
@@ -1835,6 +1883,9 @@ impl MdViewApp {
     }
 
     fn render_toc_sidebar(&mut self, ctx: &egui::Context) {
+        const TOC_MIN_WIDTH: f32 = 180.0;
+        const TOC_MAX_WIDTH: f32 = 400.0;
+
         // Update animation and request repaint if still animating
         let animating = self.state.update_toc_animation();
         if animating {
@@ -1853,8 +1904,15 @@ impl MdViewApp {
         let border_color = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
         let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
 
+        // Keep configured width within supported bounds.
+        let target_width = self.state.toc_width.clamp(TOC_MIN_WIDTH, TOC_MAX_WIDTH);
+        if (target_width - self.state.toc_width).abs() > f32::EPSILON {
+            self.state.toc_width = target_width;
+            self.state.config.general.toc_width = target_width.round() as u32;
+            self.save_config_debounced(ctx);
+        }
+
         // Animate width: from 0 to full toc_width
-        let target_width = self.state.toc_width;
         let animated_width = target_width * progress;
 
         // During animation, use exact width (not resizable); when fully open, allow resizing
@@ -1862,16 +1920,16 @@ impl MdViewApp {
 
         let mut panel = egui::SidePanel::left("toc_panel")
             .resizable(fully_open)
-            .default_width(animated_width);
+            .default_width(if fully_open { target_width } else { animated_width });
 
         if fully_open {
-            panel = panel.width_range(180.0..=400.0);
+            panel = panel.width_range(TOC_MIN_WIDTH..=TOC_MAX_WIDTH);
         } else {
             // Lock to animated width during transition
             panel = panel.width_range(animated_width..=animated_width);
         }
 
-        panel
+        let panel_response = panel
             .frame(egui::Frame::none()
                 .fill(panel_bg)
                 .inner_margin(egui::Margin::same(0.0))
@@ -1909,6 +1967,16 @@ impl MdViewApp {
                         .render(ui, &self.state.toc, self.state.current_heading_idx, is_dark);
                 }
             });
+
+        // Persist the actual width after user resize so it doesn't jump back.
+        if fully_open {
+            let actual_width = panel_response.response.rect.width().clamp(TOC_MIN_WIDTH, TOC_MAX_WIDTH);
+            if (actual_width - self.state.toc_width).abs() > 0.5 {
+                self.state.toc_width = actual_width;
+                self.state.config.general.toc_width = actual_width.round() as u32;
+                self.save_config_debounced(ctx);
+            }
+        }
     }
 
     fn render_file_browser_sidebar(&mut self, ctx: &egui::Context) {
@@ -2548,6 +2616,7 @@ impl eframe::App for MdViewApp {
         self.render_file_browser_sidebar(ctx);
         self.render_main_content(ctx);
         self.update_text_selection_from_pointer(ctx);
+        self.handle_right_click_annotation(ctx);
 
         // Render annotation popup if visible
         if self.annotation_popup.visible {
