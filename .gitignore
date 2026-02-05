@@ -63,3 +63,4 @@ Desktop.ini
 
 # Test artifacts
 test_output/
+.ralph-tui
