@@ -276,6 +276,14 @@ fn register_windows() -> AssociationResult {
         None => return AssociationResult::Failed("Could not determine executable path".to_string()),
     };
 
+    // Validate exe path doesn't contain characters that could break out of quoting
+    // in registry commands (prevents command injection via unusual install paths)
+    if exe_path.contains('"') || exe_path.contains('\n') || exe_path.contains('\r') {
+        return AssociationResult::Failed(
+            "Executable path contains invalid characters for registry commands".to_string()
+        );
+    }
+
     // Windows 10/11 has hash-protected UserChoice key that prevents apps from
     // directly setting themselves as default handlers. We need to:
     // 1. Register our app's capabilities in the registry

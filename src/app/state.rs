@@ -50,18 +50,32 @@ impl CachedMarkdown {
     }
 }
 
-/// Compute a hash of markdown-relevant config options
+/// Compute a deterministic hash of markdown-relevant config options.
+/// Uses a simple FNV-1a–style hash that is stable across Rust versions and platforms
+/// (unlike DefaultHasher which uses SipHash with randomized keys).
 fn compute_markdown_config_hash(config: &Config) -> u64 {
-    use std::hash::{Hash, Hasher};
-    use std::collections::hash_map::DefaultHasher;
+    // FNV-1a basis and prime for 64-bit
+    let mut hash: u64 = 0xcbf29ce484222325;
+    let prime: u64 = 0x100000001b3;
 
-    let mut hasher = DefaultHasher::new();
-    config.markdown.tables.hash(&mut hasher);
-    config.markdown.strikethrough.hash(&mut hasher);
-    config.markdown.task_lists.hash(&mut hasher);
-    config.markdown.footnotes.hash(&mut hasher);
-    config.markdown.smart_punctuation.hash(&mut hasher);
-    hasher.finish()
+    let mut feed = |val: bool| {
+        hash ^= val as u64;
+        hash = hash.wrapping_mul(prime);
+    };
+
+    feed(config.markdown.tables);
+    feed(config.markdown.strikethrough);
+    feed(config.markdown.task_lists);
+    feed(config.markdown.footnotes);
+    feed(config.markdown.smart_punctuation);
+
+    // Also include theme name since it affects syntax highlighting colors
+    for byte in config.general.theme.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(prime);
+    }
+
+    hash
 }
 
 /// Compute content hash for tracking changes

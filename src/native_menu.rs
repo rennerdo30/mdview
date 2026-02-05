@@ -206,7 +206,13 @@ impl NativeMenuBar {
     #[cfg(windows)]
     pub fn init_for_hwnd(&mut self, hwnd: isize) {
         if !self.initialized {
-            // Safety: hwnd comes from a valid window
+            if hwnd == 0 {
+                log::error!("Cannot initialize native menu: null HWND");
+                return;
+            }
+            // SAFETY: hwnd is obtained from eframe's window handle in the update() call,
+            // which guarantees the window is alive and valid during the frame.
+            // We also guard against null (0) hwnd above.
             unsafe {
                 let _ = self.menu.init_for_hwnd(hwnd);
             }

@@ -61,6 +61,17 @@ pub fn save_annotations(
     let annotation_path = get_annotation_path(markdown_path);
     let content = serde_json::to_string_pretty(store).map_err(StorageError::Serialize)?;
 
+    // Check serialized size before writing to ensure consistency with load limit
+    if content.len() as u64 > MAX_ANNOTATION_FILE_SIZE {
+        return Err(StorageError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Annotation data too large to save ({} bytes, max {}). Consider removing some annotations.",
+                content.len(), MAX_ANNOTATION_FILE_SIZE
+            ),
+        )));
+    }
+
     std::fs::write(&annotation_path, content).map_err(StorageError::Io)?;
 
     Ok(())

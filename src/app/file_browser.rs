@@ -123,9 +123,18 @@ impl FolderState {
     }
 }
 
+/// Maximum recursion depth for directory scanning (prevents stack overflow on deep trees)
+const MAX_SCAN_DEPTH: usize = 32;
+
 /// Scan a directory for markdown files and subdirectories
 fn scan_directory(path: &Path, depth: usize) -> Result<Vec<FileEntry>, std::io::Error> {
     let mut entries = Vec::new();
+
+    // Prevent excessive recursion depth
+    if depth >= MAX_SCAN_DEPTH {
+        log::warn!("Directory scan depth limit ({}) reached at {:?}", MAX_SCAN_DEPTH, path);
+        return Ok(entries);
+    }
 
     let mut dir_entries: Vec<_> = std::fs::read_dir(path)?
         .filter_map(|e| e.ok())
@@ -153,6 +162,12 @@ fn scan_directory(path: &Path, depth: usize) -> Result<Vec<FileEntry>, std::io::
         }
 
         if entry_path.is_dir() {
+            // Skip symlinks to directories to prevent cycles
+            if entry_path.symlink_metadata().map(|m| m.is_symlink()).unwrap_or(false) {
+                log::debug!("Skipping symlinked directory: {:?}", entry_path);
+                continue;
+            }
+
             entries.push(FileEntry {
                 path: entry_path.clone(),
                 name,

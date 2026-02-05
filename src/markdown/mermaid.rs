@@ -36,16 +36,15 @@ fn check_mmdc_available() -> bool {
 pub fn render_mermaid_via_cli(code: &str, scale: f32) -> Result<Vec<u8>, String> {
     use std::fs;
     use std::env;
-    use std::time::SystemTime;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    // Create unique temp files using timestamp and pid
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // Create unique temp files using PID + atomic counter (collision-free)
     let temp_dir = env::temp_dir();
-    let timestamp = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let input_path = temp_dir.join(format!("mdview_mermaid_{}_{}.mmd", std::process::id(), timestamp));
-    let output_path = temp_dir.join(format!("mdview_mermaid_{}_{}.png", std::process::id(), timestamp));
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let input_path = temp_dir.join(format!("mdview_mermaid_{}_{}.mmd", std::process::id(), seq));
+    let output_path = temp_dir.join(format!("mdview_mermaid_{}_{}.png", std::process::id(), seq));
 
     // Write mermaid code to temp file
     fs::write(&input_path, code)
@@ -68,14 +67,24 @@ pub fn render_mermaid_via_cli(code: &str, scale: f32) -> Result<Vec<u8>, String>
         .arg("-b")
         .arg("white")
         .output()
-        .map_err(|e| format!("Failed to run mmdc: {}", e))?;
+        .map_err(|e| {
+            // Clean up input on command failure
+            if let Err(ce) = fs::remove_file(&input_path) {
+                log::warn!("Failed to clean up mermaid temp input {:?}: {}", input_path, ce);
+            }
+            format!("Failed to run mmdc: {}", e)
+        })?;
 
     // Clean up input file
-    let _ = fs::remove_file(&input_path);
+    if let Err(e) = fs::remove_file(&input_path) {
+        log::warn!("Failed to clean up mermaid temp input {:?}: {}", input_path, e);
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let _ = fs::remove_file(&output_path);
+        if let Err(e) = fs::remove_file(&output_path) {
+            log::debug!("Failed to clean up mermaid temp output {:?}: {}", output_path, e);
+        }
         return Err(format!("mmdc failed: {}", stderr));
     }
 
@@ -84,7 +93,9 @@ pub fn render_mermaid_via_cli(code: &str, scale: f32) -> Result<Vec<u8>, String>
         .map_err(|e| format!("Failed to read output: {}", e))?;
 
     // Clean up output file
-    let _ = fs::remove_file(&output_path);
+    if let Err(e) = fs::remove_file(&output_path) {
+        log::warn!("Failed to clean up mermaid temp output {:?}: {}", output_path, e);
+    }
 
     log::debug!("mermaid-cli rendered {} bytes", png_data.len());
     Ok(png_data)

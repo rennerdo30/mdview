@@ -26,8 +26,8 @@ impl FileWatcher {
     ) -> Result<Self, WatcherError> {
         let debounce_duration = Duration::from_millis(WATCHER_DEBOUNCE_MS);
 
-        // Clone path for use in closure
-        let watched_path = path.clone();
+        // Canonicalize the watched path for reliable comparison with event paths
+        let watched_path = path.canonicalize().unwrap_or_else(|_| path.clone());
 
         // Create the debouncer
         let mut debouncer = new_debouncer(
@@ -41,8 +41,10 @@ impl FileWatcher {
                         for event in events {
                             log::debug!("File event for: {:?}", event.path);
 
-                            // Only process events for our watched file
-                            if event.path == watched_path {
+                            // Compare canonicalized paths to handle symlinks and relative paths
+                            let event_canonical = event.path.canonicalize()
+                                .unwrap_or_else(|_| event.path.clone());
+                            if event_canonical == watched_path {
                                 has_event = true;
                             }
                         }
