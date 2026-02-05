@@ -305,7 +305,8 @@ impl AppState {
         let dt = self
             .toc_animation_last_time
             .map(|last| now.duration_since(last).as_secs_f32())
-            .unwrap_or(0.016); // ~60fps default for first frame
+            .unwrap_or(0.016) // ~60fps default for first frame
+            .min(0.1); // Clamp to prevent overshoot on frame drops
         self.toc_animation_last_time = Some(now);
 
         // Animation duration: 200ms
@@ -349,7 +350,8 @@ impl AppState {
         let dt = self
             .file_transition_last_time
             .map(|last| now.duration_since(last).as_secs_f32())
-            .unwrap_or(0.016);
+            .unwrap_or(0.016)
+            .min(0.1); // Clamp to prevent overshoot on frame drops
         self.file_transition_last_time = Some(now);
 
         // ~150ms per phase (fade-out or fade-in)
@@ -575,6 +577,10 @@ impl AppState {
 
         let old_theme = self.config.general.theme.clone();
         self.config.general.theme = theme_name.to_string();
+
+        // Invalidate caches that depend on theme (e.g. syntax highlighting colors)
+        self.update_config_hash();
+        self.invalidate_markdown_cache();
 
         // Call theme change hook if theme actually changed
         #[cfg(feature = "plugins")]

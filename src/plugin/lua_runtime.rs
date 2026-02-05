@@ -26,9 +26,9 @@ impl LuaRuntime {
         let lua = Lua::new();
         let state = Arc::new(Mutex::new(PluginState::new()));
 
-        // Set up sandboxed environment
+        // Set up sandboxed environment — remove dangerous globals that could
+        // escape the sandbox via filesystem, code loading, or introspection.
         lua.scope(|_scope| {
-            // Remove potentially dangerous functions
             let globals = lua.globals();
 
             // Remove file I/O
@@ -39,10 +39,20 @@ impl LuaRuntime {
             // Remove OS functions
             globals.set("os", Value::Nil)?;
 
-            // Remove debug library
+            // Remove debug library (allows metatable/upvalue introspection)
             globals.set("debug", Value::Nil)?;
 
-            // Keep safe functions: string, table, math, etc.
+            // Remove code loading functions that could bypass sandbox
+            globals.set("require", Value::Nil)?;
+            globals.set("loadstring", Value::Nil)?;
+            globals.set("load", Value::Nil)?;
+            globals.set("rawget", Value::Nil)?;
+            globals.set("rawset", Value::Nil)?;
+
+            // Remove package module (used by require)
+            globals.set("package", Value::Nil)?;
+
+            // Keep safe functions: string, table, math, print, pairs, ipairs, etc.
 
             Ok(())
         })?;

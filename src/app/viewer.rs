@@ -514,6 +514,7 @@ impl MdViewApp {
             if let Some(config_path) = crate::config::loader::get_default_config_path() {
                 if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
                     log::warn!("Failed to save config: {}", e);
+                    self.state.set_status(format!("Failed to save config: {}", e));
                 }
             }
         }
@@ -611,6 +612,7 @@ impl MdViewApp {
             if let Some(config_path) = crate::config::loader::get_default_config_path() {
                 if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
                     log::warn!("Failed to save config: {}", e);
+                    self.state.set_status(format!("Failed to save config: {}", e));
                 }
             }
         }
@@ -2564,23 +2566,26 @@ impl eframe::App for MdViewApp {
                 ctx.set_style(style);
             }
         }
-        self.sync_file_watcher(ctx);
 
-        // Handle drag and drop with visual feedback
-        let (is_dragging, dropped_file) = ctx.input(|i| {
+        // Handle drag and drop with visual feedback (uses first dropped file only)
+        let (is_dragging, dropped_file, extra_dropped) = ctx.input(|i| {
             let dragging = !i.raw.hovered_files.is_empty();
             let dropped = if !i.raw.dropped_files.is_empty() {
                 i.raw.dropped_files[0].path.clone()
             } else {
                 None
             };
-            (dragging, dropped)
+            let extra = i.raw.dropped_files.len().saturating_sub(1);
+            (dragging, dropped, extra)
         });
 
         self.is_dragging_file = is_dragging;
 
         if let Some(path) = dropped_file {
             self.is_dragging_file = false;
+            if extra_dropped > 0 {
+                log::debug!("Ignoring {} additional dropped file(s)", extra_dropped);
+            }
             // Check if it's a directory or file
             if path.is_dir() {
                 if let Err(e) = self.state.open_folder(path) {

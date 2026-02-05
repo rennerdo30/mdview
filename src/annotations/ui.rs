@@ -14,19 +14,15 @@ pub const HIGHLIGHT_COLORS: &[(&str, &str)] = &[
     ("#ff9800", "Orange"),
 ];
 
-/// Parse a hex color string to Color32
+/// Parse a hex color string to Color32 for annotation use.
+/// Falls back to yellow (default highlight color) on invalid input.
 pub fn parse_hex_color(hex: &str) -> Color32 {
-    let hex = hex.trim_start_matches('#');
-
-    if hex.len() != 6 {
-        return Color32::YELLOW;
+    let trimmed = hex.trim_start_matches('#');
+    if trimmed.len() == 6 || trimmed.len() == 3 {
+        crate::theme::style::parse_hex_color(hex)
+    } else {
+        Color32::YELLOW
     }
-
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(235);
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(59);
-
-    Color32::from_rgb(r, g, b)
 }
 
 /// Annotation creation popup

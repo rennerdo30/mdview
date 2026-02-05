@@ -270,6 +270,7 @@ impl NativeMenuBar {
             } else if id == self.width_narrow_item.id() {
                 Some(MenuAction::SetReadingWidth(Some(560.0)))
             } else {
+                log::warn!("Unhandled menu item with id: {:?}", id);
                 None
             };
 

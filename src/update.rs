@@ -115,7 +115,10 @@ impl UpdateChecker {
 
 /// Check for updates synchronously
 pub fn check_for_update() -> Option<UpdateInfo> {
-    let response = ureq::get(&releases_url())
+    let response = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .get(&releases_url())
         .set("User-Agent", &format!("mdview/{}", CURRENT_VERSION))
         .set("Accept", "application/vnd.github.v3+json")
         .call()

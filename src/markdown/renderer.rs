@@ -22,6 +22,9 @@ const IMAGE_CACHE_MAX_SIZE: usize = 50;
 /// Maximum number of syntax-highlighted code blocks to cache
 const SYNTAX_CACHE_MAX_SIZE: usize = 100;
 
+/// Maximum number of mermaid metadata entries to cache
+const MERMAID_METADATA_CACHE_MAX_SIZE: usize = 200;
+
 /// Pre-built annotation index for efficient O(log n) lookups
 /// Instead of O(n) scan per character, we build a sorted list of annotation boundaries
 struct AnnotationIndex<'a> {
@@ -49,11 +52,12 @@ impl<'a> AnnotationIndex<'a> {
         let first_idx = self.sorted_annotations
             .partition_point(|a| a.end <= start);
 
-        // Collect overlapping annotations (most paragraphs have 0-4 annotations)
+        // Collect overlapping annotations — partition_point guarantees a.end > start
+        // for all remaining entries, so we only need to check a.start < end.
+        // Using take_while for early exit since annotations are sorted by start.
         self.sorted_annotations[first_idx..]
             .iter()
             .take_while(|a| a.start < end)
-            .filter(|a| a.overlaps(start, end))
             .copied()
             .collect()
     }
@@ -81,16 +85,9 @@ struct MermaidMetadata {
     nodes: Vec<String>,
 }
 
-/// Parse a hex color string from config to Color32
+/// Parse a hex color string from config to Color32 (delegates to shared implementation)
 fn parse_config_hex_color(hex: &str) -> Color32 {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
-        return Color32::from_gray(128);
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128);
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);
-    Color32::from_rgb(r, g, b)
+    crate::theme::style::parse_hex_color(hex)
 }
 
 /// Theme-aware colors for markdown rendering
@@ -849,6 +846,20 @@ impl MarkdownRenderer {
             hex::encode(&hasher.finalize()[..8])
         };
 
+        // Evict oldest entries when cache is full
+        if self.mermaid_metadata_cache.len() >= MERMAID_METADATA_CACHE_MAX_SIZE
+            && !self.mermaid_metadata_cache.contains_key(&cache_key)
+        {
+            // Remove ~25% of entries to amortize eviction cost
+            let to_remove: Vec<String> = self.mermaid_metadata_cache.keys()
+                .take(MERMAID_METADATA_CACHE_MAX_SIZE / 4)
+                .cloned()
+                .collect();
+            for key in to_remove {
+                self.mermaid_metadata_cache.remove(&key);
+            }
+        }
+
         // Use entry API to avoid clone - returns reference to cached or newly inserted value
         let diagram_type_owned = diagram_type.to_string();
         let code_owned = code.to_string();
@@ -1437,7 +1448,8 @@ impl MarkdownRenderer {
             self.text_buffer.push_str(text);
         }
 
-        // Keep byte offsets aligned with rendered/cull paths across all block types.
+        // Use byte length for offset tracking — annotations and pulldown-cmark
+        // both use byte offsets into the source document.
         self.char_offset += text.len();
     }
 
@@ -2960,7 +2972,9 @@ impl MarkdownRenderer {
         ui.ctx().request_repaint();
     }
 
-    /// Resolve an image URL to a local path
+    /// Resolve an image URL to a local path.
+    /// Canonicalizes the result and ensures it doesn't escape the base directory
+    /// (prevents path traversal attacks via `../../` in markdown image references).
     fn resolve_image_path(&self, url: &str) -> Option<PathBuf> {
         // Skip remote URLs - they're handled separately
         if url.starts_with("http://") || url.starts_with("https://") {
@@ -2972,7 +2986,7 @@ impl MarkdownRenderer {
         // If absolute path, use directly
         if path.is_absolute() {
             if path.exists() {
-                return Some(path);
+                return path.canonicalize().ok();
             }
             return None;
         }
@@ -2981,13 +2995,23 @@ impl MarkdownRenderer {
         if let Some(base) = &self.base_path {
             let full_path = base.join(&path);
             if full_path.exists() {
-                return Some(full_path);
+                if let Ok(canonical) = full_path.canonicalize() {
+                    // Verify the resolved path is under the base directory
+                    if let Ok(canonical_base) = base.canonicalize() {
+                        if canonical.starts_with(&canonical_base) {
+                            return Some(canonical);
+                        }
+                        log::warn!("Image path traversal blocked: {:?} is outside {:?}", url, base);
+                        return None;
+                    }
+                    return Some(canonical);
+                }
             }
         }
 
         // Try relative to current directory
         if path.exists() {
-            return Some(path);
+            return path.canonicalize().ok();
         }
 
         None

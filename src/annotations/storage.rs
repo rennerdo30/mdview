@@ -17,12 +17,24 @@ pub fn get_annotation_path(markdown_path: &Path) -> PathBuf {
     parent.join(format!(".{}.mdview-annotations.json", filename))
 }
 
+/// Maximum annotation file size (10 MB) to prevent excessive memory use
+const MAX_ANNOTATION_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
 /// Load annotations from the sidecar file
 pub fn load_annotations(markdown_path: &Path) -> Result<AnnotationStore, StorageError> {
     let annotation_path = get_annotation_path(markdown_path);
 
     if !annotation_path.exists() {
         return Ok(AnnotationStore::new());
+    }
+
+    // Check file size before loading to prevent OOM on malicious/corrupted files
+    let metadata = std::fs::metadata(&annotation_path).map_err(StorageError::Io)?;
+    if metadata.len() > MAX_ANNOTATION_FILE_SIZE {
+        return Err(StorageError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Annotation file too large ({} bytes, max {})", metadata.len(), MAX_ANNOTATION_FILE_SIZE),
+        )));
     }
 
     let content = std::fs::read_to_string(&annotation_path).map_err(StorageError::Io)?;

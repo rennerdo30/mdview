@@ -295,19 +295,27 @@ fn apply_light_theme(style: &mut Style, config: &Config) {
     style.visuals = visuals;
 }
 
-/// Parse a hex color string to Color32
+/// Parse a hex color string to Color32.
+/// Supports 6-char (`#rrggbb`) and 3-char (`#rgb`) shorthand formats.
 pub fn parse_hex_color(hex: &str) -> Color32 {
     let hex = hex.trim_start_matches('#');
 
-    if hex.len() != 6 {
-        return Color32::from_gray(128);
+    match hex.len() {
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128);
+            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
+            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);
+            Color32::from_rgb(r, g, b)
+        }
+        3 => {
+            // Expand shorthand: #rgb -> #rrggbb
+            let r = u8::from_str_radix(&hex[0..1], 16).unwrap_or(8);
+            let g = u8::from_str_radix(&hex[1..2], 16).unwrap_or(8);
+            let b = u8::from_str_radix(&hex[2..3], 16).unwrap_or(8);
+            Color32::from_rgb(r << 4 | r, g << 4 | g, b << 4 | b)
+        }
+        _ => Color32::from_gray(128),
     }
-
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128);
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);
-
-    Color32::from_rgb(r, g, b)
 }
 
 /// Adjust brightness of a color

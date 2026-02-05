@@ -77,11 +77,14 @@ pub struct TocPanel {
     /// Cached visible indices (invalidated when collapsed changes)
     cached_visible_indices: Option<Vec<usize>>,
 
-    /// Hash of collapsed state when cache was built
-    collapsed_generation: u64,
-
     /// Search/filter query text
     search_query: String,
+
+    /// Cached search query that matching_indices_cache was built for
+    cached_search_query: String,
+
+    /// Cached matching indices for search (invalidated when search_query changes)
+    matching_indices_cache: Option<Vec<bool>>,
 
     /// Whether to request focus on the search field next frame
     request_search_focus: bool,
@@ -94,8 +97,9 @@ impl TocPanel {
             focused_index: None,
             has_focus: false,
             cached_visible_indices: None,
-            collapsed_generation: 0,
             search_query: String::new(),
+            cached_search_query: String::new(),
+            matching_indices_cache: None,
             request_search_focus: false,
         }
     }
@@ -157,17 +161,24 @@ impl TocPanel {
         });
         ui.add_space(4.0);
 
-        // Build set of matching entry indices for the current search query
+        // Build set of matching entry indices for the current search query (cached)
         let matching_indices: Option<Vec<bool>> = if self.search_query.is_empty() {
+            self.matching_indices_cache = None;
+            self.cached_search_query.clear();
             None // No filtering
         } else {
-            let mut matches = vec![false; toc.len()];
-            for entry in &toc.flat {
-                if matches_search(&entry.text, &self.search_query) {
-                    matches[entry.index] = true;
+            // Rebuild cache only when search query changes
+            if self.cached_search_query != self.search_query || self.matching_indices_cache.is_none() {
+                let mut matches = vec![false; toc.len()];
+                for entry in &toc.flat {
+                    if matches_search(&entry.text, &self.search_query) {
+                        matches[entry.index] = true;
+                    }
                 }
+                self.matching_indices_cache = Some(matches);
+                self.cached_search_query.clone_from(&self.search_query);
             }
-            Some(matches)
+            self.matching_indices_cache.clone()
         };
 
         // Build visible rows for virtualized rendering in the common no-filter case.
@@ -268,31 +279,16 @@ impl TocPanel {
     /// Uses caching to avoid O(n) tree traversal every frame
     /// Returns a clone of the cached Vec (much cheaper than tree traversal)
     fn get_visible_indices(&mut self, toc: &TocTree) -> Vec<usize> {
-        // Compute a simple hash of collapsed state
-        let current_gen = self.compute_collapsed_hash();
-
-        // Check if cache is valid
+        // Check if cache is valid (invalidated when collapsed state changes)
         if let Some(ref cached) = self.cached_visible_indices {
-            if self.collapsed_generation == current_gen {
-                return cached.clone();
-            }
+            return cached.clone();
         }
 
         // Rebuild cache - tree traversal only happens when collapsed state changes
         let mut indices = Vec::new();
         self.collect_visible_indices(&toc.entries, &mut indices);
         self.cached_visible_indices = Some(indices.clone());
-        self.collapsed_generation = current_gen;
         indices
-    }
-
-    /// Compute a simple hash of the collapsed state for cache invalidation
-    fn compute_collapsed_hash(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        use std::collections::hash_map::DefaultHasher;
-        let mut hasher = DefaultHasher::new();
-        self.collapsed.hash(&mut hasher);
-        hasher.finish()
     }
 
     fn collect_visible_indices(&self, entries: &[TocEntry], indices: &mut Vec<usize>) {
@@ -440,6 +436,10 @@ impl TocPanel {
                         if pos + 1 < visible_indices.len() {
                             self.focused_index = Some(visible_indices[pos + 1]);
                         }
+                        // At last item: stay clamped (no-op)
+                    } else if !visible_indices.is_empty() {
+                        // Focused item not in visible list (e.g. collapsed), reset to first
+                        self.focused_index = Some(visible_indices[0]);
                     }
                 } else if !visible_indices.is_empty() {
                     self.focused_index = Some(visible_indices[0]);
@@ -452,6 +452,10 @@ impl TocPanel {
                         if pos > 0 {
                             self.focused_index = Some(visible_indices[pos - 1]);
                         }
+                        // At first item: stay clamped (no-op)
+                    } else if !visible_indices.is_empty() {
+                        // Focused item not in visible list, reset to last
+                        self.focused_index = Some(visible_indices[visible_indices.len() - 1]);
                     }
                 } else if !visible_indices.is_empty() {
                     self.focused_index = Some(visible_indices[visible_indices.len() - 1]);

@@ -24,10 +24,10 @@ pub struct Annotation {
     /// Type of annotation
     pub kind: AnnotationKind,
 
-    /// Start position in the document (character offset)
+    /// Start position in the document (byte offset)
     pub start: usize,
 
-    /// End position in the document (character offset)
+    /// End position in the document (byte offset)
     pub end: usize,
 
     /// Color for highlights (hex string)
@@ -332,16 +332,21 @@ impl AnnotationStore {
     }
 }
 
-/// Generate a unique annotation ID
+/// Generate a unique annotation ID using timestamp + atomic counter
+/// to avoid collisions when multiple annotations are created in the same nanosecond.
 fn generate_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
 
-    format!("ann_{:x}", timestamp)
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("ann_{:x}_{:x}", timestamp, seq)
 }
 
 #[cfg(test)]
