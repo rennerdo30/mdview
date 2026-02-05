@@ -283,12 +283,13 @@ fn register_windows() -> AssociationResult {
 
     // Pre-format strings that need the exe_path
     let open_command = format!("\"{}\" \"%1\"", exe_path);
+    let icon_command = format!("\"{}\",0", exe_path);
 
     // Register ProgId with shell open command
     let reg_commands: Vec<Vec<&str>> = vec![
         // Create ProgId for mdview
         vec!["reg", "add", r"HKCU\Software\Classes\mdview.md", "/ve", "/d", "Markdown Document", "/f"],
-        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\DefaultIcon", "/ve", "/d", &exe_path, "/f"],
+        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\DefaultIcon", "/ve", "/d", &icon_command, "/f"],
         vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\shell\open\command", "/ve", "/d", &open_command, "/f"],
         // Register application capabilities
         vec!["reg", "add", r"HKCU\Software\Classes\Applications\mdview.exe\shell\open\command", "/ve", "/d", &open_command, "/f"],

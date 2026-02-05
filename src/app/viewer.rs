@@ -71,6 +71,7 @@ struct MenuActions {
     toggle_toc: bool,
     toggle_file_browser: bool,
     clear_recent: bool,
+    show_help: bool,
     show_about: bool,
     edit_config: bool,
     file_to_open: Option<PathBuf>,
@@ -280,6 +281,8 @@ pub struct MdViewApp {
     update_checker: UpdateChecker,
     /// Whether to show the update notification dialog
     show_update_dialog: bool,
+    /// Whether to show the Quick Help dialog
+    show_help_dialog: bool,
     /// Whether to show the About dialog
     show_about_dialog: bool,
     /// Native menu bar (macOS/Windows/Linux)
@@ -376,6 +379,7 @@ impl MdViewApp {
             show_file_association_dialog,
             update_checker,
             show_update_dialog: false,
+            show_help_dialog: false,
             show_about_dialog: false,
             native_menu: None,
             cached_is_default_handler: None,
@@ -700,6 +704,104 @@ impl MdViewApp {
         }
     }
 
+    /// Render the Quick Help dialog
+    fn render_help_dialog(&mut self, ctx: &egui::Context) {
+        let mut should_close = false;
+        let mut should_open_repo = false;
+        let mut should_open_issues = false;
+        let issue_url = format!("{}/issues", REPOSITORY_URL.trim_end_matches('/'));
+        let kb = &self.state.config.keybindings;
+
+        egui::Window::new("Quick Help")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .min_width(430.0)
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Getting Started").strong());
+                ui.add_space(4.0);
+                ui.label("Open a file from File -> Open File... or drag and drop a .md file.");
+                ui.label("Use View -> Show/Hide Contents to toggle the table of contents.");
+                ui.label("Open a folder to browse files with the sidebar.");
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                ui.label(egui::RichText::new("Keyboard Shortcuts").strong());
+                ui.add_space(6.0);
+
+                egui::Grid::new("quick_help_shortcuts")
+                    .num_columns(2)
+                    .spacing([24.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Open file");
+                        ui.monospace(&kb.open_file);
+                        ui.end_row();
+
+                        ui.label("Open folder");
+                        ui.monospace(&kb.open_folder);
+                        ui.end_row();
+
+                        ui.label("Toggle contents");
+                        ui.monospace(&kb.toggle_toc);
+                        ui.end_row();
+
+                        ui.label("Toggle file browser");
+                        ui.monospace(&kb.toggle_file_browser);
+                        ui.end_row();
+
+                        ui.label("Reload file");
+                        ui.monospace(&kb.reload);
+                        ui.end_row();
+
+                        ui.label("Export PDF");
+                        ui.monospace(&kb.export_pdf);
+                        ui.end_row();
+                    });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    if ui.link("GitHub").clicked() {
+                        should_open_repo = true;
+                    }
+                    ui.label(" | ");
+                    if ui.link("Report Issue").clicked() {
+                        should_open_issues = true;
+                    }
+                });
+
+                ui.add_space(12.0);
+                if ui.button("Close").clicked() {
+                    should_close = true;
+                }
+            });
+
+        if should_open_repo {
+            if let Err(e) = open::that(REPOSITORY_URL) {
+                log::error!("Failed to open repository URL: {}", e);
+                self.state
+                    .set_status(format!("Could not open link: {}", e));
+            }
+        }
+
+        if should_open_issues {
+            if let Err(e) = open::that(&issue_url) {
+                log::error!("Failed to open issues URL: {}", e);
+                self.state
+                    .set_status(format!("Could not open link: {}", e));
+            }
+        }
+
+        if should_close {
+            self.show_help_dialog = false;
+        }
+    }
+
     fn handle_native_menu_events(&mut self, ctx: &egui::Context) {
         use crate::native_menu::MenuAction;
 
@@ -770,6 +872,9 @@ impl MdViewApp {
                 }
                 MenuAction::About => {
                     self.show_about_dialog = true;
+                }
+                MenuAction::QuickHelp => {
+                    self.show_help_dialog = true;
                 }
                 MenuAction::CheckUpdates => {
                     self.update_checker.check_async();
@@ -1372,6 +1477,13 @@ impl MdViewApp {
 
     fn render_help_menu(ui: &mut egui::Ui, actions: &mut MenuActions) {
         ui.menu_button("Help", |ui| {
+            if ui.button("Quick Help").clicked() {
+                actions.show_help = true;
+                ui.close_menu();
+            }
+
+            ui.separator();
+
             if ui.button("About mdview").clicked() {
                 actions.show_about = true;
                 ui.close_menu();
@@ -1433,6 +1545,9 @@ impl MdViewApp {
         }
         if actions.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if actions.show_help {
+            self.show_help_dialog = true;
         }
         if actions.show_about {
             self.show_about_dialog = true;
@@ -2307,6 +2422,11 @@ impl eframe::App for MdViewApp {
         // Render update dialog if needed
         if self.show_update_dialog && self.update_checker.should_show() {
             self.render_update_dialog(ctx);
+        }
+
+        // Render quick help dialog if needed
+        if self.show_help_dialog {
+            self.render_help_dialog(ctx);
         }
 
         // Render about dialog if needed

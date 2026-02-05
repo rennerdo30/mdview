@@ -2623,7 +2623,16 @@ impl MarkdownRenderer {
             ui.add_space(4.0);
 
             if !text.is_empty() {
-                self.render_mixed_content(ui, &text, base_font_size);
+                // Give list item text an explicit width so wrapped inline content
+                // stays beside the marker instead of collapsing underneath it.
+                let text_width = ui.available_width().max(1.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(text_width, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        self.render_mixed_content(ui, &text, base_font_size);
+                    },
+                );
             }
         });
     }

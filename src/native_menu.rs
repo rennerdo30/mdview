@@ -23,6 +23,7 @@ pub enum MenuAction {
     ZoomOut,
     ZoomReset,
     About,
+    QuickHelp,
     CheckUpdates,
     /// Set reading width (None = full width)
     SetReadingWidth(Option<f32>),
@@ -48,6 +49,7 @@ pub struct NativeMenuBar {
     zoom_out_item: MenuItem,
     zoom_reset_item: MenuItem,
     about_item: MenuItem,
+    quick_help_item: MenuItem,
     check_updates_item: MenuItem,
     // Reading width menu items
     width_full_item: MenuItem,
@@ -136,9 +138,12 @@ impl NativeMenuBar {
         // === Help Menu ===
         let help_menu = Submenu::new("Help", true);
 
+        let quick_help_item = MenuItem::new("Quick Help", true, None::<Accelerator>);
         let about_item = MenuItem::new("About mdview", true, None::<Accelerator>);
         let check_updates_item = MenuItem::new("Check for Updates...", true, None::<Accelerator>);
 
+        let _ = help_menu.append(&quick_help_item);
+        let _ = help_menu.append(&PredefinedMenuItem::separator());
         let _ = help_menu.append(&about_item);
         let _ = help_menu.append(&check_updates_item);
 
@@ -189,6 +194,7 @@ impl NativeMenuBar {
             zoom_out_item,
             zoom_reset_item,
             about_item,
+            quick_help_item,
             check_updates_item,
             width_full_item,
             width_comfortable_item,
@@ -253,6 +259,8 @@ impl NativeMenuBar {
                 Some(MenuAction::ZoomReset)
             } else if id == self.about_item.id() {
                 Some(MenuAction::About)
+            } else if id == self.quick_help_item.id() {
+                Some(MenuAction::QuickHelp)
             } else if id == self.check_updates_item.id() {
                 Some(MenuAction::CheckUpdates)
             } else if id == self.width_full_item.id() {

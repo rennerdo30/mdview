@@ -8,6 +8,7 @@
 use clap::Parser;
 use eframe::egui;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 mod app;
 mod config;
@@ -74,6 +75,17 @@ enum InputType {
     File(PathBuf),
     Folder(PathBuf),
     None,
+}
+
+fn load_app_icon() -> Option<Arc<egui::IconData>> {
+    let icon_bytes = include_bytes!("../assets/icon.ico");
+    let image = image::load_from_memory(icon_bytes).ok()?;
+    let rgba = image.to_rgba8();
+    Some(Arc::new(egui::IconData {
+        rgba: rgba.into_raw(),
+        width: image.width(),
+        height: image.height(),
+    }))
 }
 
 fn main() -> eframe::Result<()> {
@@ -153,11 +165,18 @@ fn main() -> eframe::Result<()> {
     #[cfg(not(target_os = "macos"))]
     let native_menu: Option<native_menu::NativeMenuBar> = None;
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([args.width as f32, args.height as f32])
+        .with_min_inner_size([400.0, 300.0])
+        .with_title("mdview");
+    if let Some(icon) = load_app_icon() {
+        viewport = viewport.with_icon(icon);
+    } else {
+        log::warn!("Failed to load application icon from assets/icon.ico");
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([args.width as f32, args.height as f32])
-            .with_min_inner_size([400.0, 300.0])
-            .with_title("mdview"),
+        viewport,
         ..Default::default()
     };
 
