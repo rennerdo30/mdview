@@ -12,6 +12,9 @@ pub struct TocEntry {
     /// Heading text
     pub text: String,
 
+    /// Pre-lowercased text for efficient case-insensitive search (computed once)
+    pub text_lower: String,
+
     /// Heading level (1-6)
     pub level: usize,
 
@@ -24,8 +27,10 @@ pub struct TocEntry {
 
 impl TocEntry {
     pub fn new(text: String, level: usize, index: usize) -> Self {
+        let text_lower = text.to_lowercase();
         Self {
             text,
+            text_lower,
             level,
             index,
             children: Vec::new(),

@@ -55,13 +55,13 @@ struct VisibleRow {
     has_children: bool,
 }
 
-/// Check if a heading text matches the search query (case-insensitive substring).
-/// The `query` parameter should already be lowercased for efficiency.
-fn matches_search(text: &str, query_lower: &str) -> bool {
+/// Check if pre-lowercased heading text matches the search query.
+/// Both `text_lower` and `query_lower` should already be lowercased.
+fn matches_search(text_lower: &str, query_lower: &str) -> bool {
     if query_lower.is_empty() {
         return true;
     }
-    text.to_lowercase().contains(query_lower)
+    text_lower.contains(query_lower)
 }
 
 /// TOC panel widget
@@ -185,7 +185,7 @@ impl TocPanel {
                 let query_lower = self.search_query.to_lowercase();
                 let mut matches = vec![false; toc.len()];
                 for entry in &toc.flat {
-                    if matches_search(&entry.text, &query_lower) {
+                    if matches_search(&entry.text_lower, &query_lower) {
                         matches[entry.index] = true;
                     }
                 }
@@ -854,12 +854,12 @@ mod tests {
 
     #[test]
     fn test_matches_search() {
-        // matches_search expects query to be pre-lowercased
-        assert!(matches_search("Hello World", "hello"));
-        assert!(matches_search("Hello World", "world"));
-        assert!(matches_search("Hello World", "lo wo"));
-        assert!(matches_search("Hello World", ""));
-        assert!(!matches_search("Hello World", "xyz"));
+        // matches_search expects both inputs to be pre-lowercased
+        assert!(matches_search("hello world", "hello"));
+        assert!(matches_search("hello world", "world"));
+        assert!(matches_search("hello world", "lo wo"));
+        assert!(matches_search("hello world", ""));
+        assert!(!matches_search("hello world", "xyz"));
     }
 
     #[test]
