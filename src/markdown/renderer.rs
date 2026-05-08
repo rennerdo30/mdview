@@ -4094,6 +4094,57 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_block_map_extended_markdown_blocks() {
+        let md = r#"---
+title: Demo
+---
+
+Term
+: Definition
+
+$$
+x = y
+$$
+
+<section>
+Raw HTML
+</section>
+"#;
+        let events = parse_events(md);
+        let blocks = compute_block_map(&events, 800.0);
+
+        assert!(
+            blocks.iter().any(|block| matches!(
+                events.get(block.event_start),
+                Some(Event::Start(Tag::MetadataBlock(_)))
+            )),
+            "metadata block should be represented for viewport culling"
+        );
+        assert!(
+            blocks.iter().any(|block| matches!(
+                events.get(block.event_start),
+                Some(Event::Start(Tag::DefinitionList))
+            )),
+            "definition list should be represented for viewport culling"
+        );
+        assert!(
+            blocks
+                .iter()
+                .any(|block| events[block.event_start..block.event_end]
+                    .iter()
+                    .any(|event| matches!(event, Event::DisplayMath(_)))),
+            "display math should be represented for viewport culling"
+        );
+        assert!(
+            blocks.iter().any(|block| matches!(
+                events.get(block.event_start),
+                Some(Event::Start(Tag::HtmlBlock))
+            )),
+            "HTML block should be represented for viewport culling"
+        );
+    }
+
+    #[test]
     fn test_compute_block_map_mixed_content() {
         let md = "# Title\n\nParagraph one.\n\n- item\n\n## Subtitle\n\n> quote\n\n---\n";
         let events = parse_events(md);
