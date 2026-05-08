@@ -124,7 +124,7 @@ None
 - [ ] Add syntax language coverage tests.
   - Verify common aliases for Rust, Python, JavaScript, TypeScript, TSX, JSX, Go, C, C++, Java, TOML, YAML, JSON, Bash, SQL, HTML, CSS, Markdown, and diff.
   - Confirm unknown languages fall back to plain text.
-- [ ] Normalize common language aliases before passing to syntect.
+- [x] Normalize common language aliases before passing to syntect.
   - Examples: `sh`/`shell`/`bash`, `js`/`javascript`, `ts`/`typescript`, `yml`/`yaml`, `c++`/`cpp`.
 
 ### P2: Visual & GUI Regression Testing

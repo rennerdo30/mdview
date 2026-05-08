@@ -1,5 +1,6 @@
 //! Markdown renderer - converts pulldown-cmark events to egui widgets
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
@@ -986,12 +987,13 @@ impl MarkdownRenderer {
         is_dark: bool,
         show_line_numbers: bool,
     ) -> Option<Arc<egui::text::LayoutJob>> {
+        let normalized_language = normalize_language_token(language);
         // Generate cache key from code hash + language + theme + dark mode + line numbers
         let cache_key = {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(code.as_bytes());
-            hasher.update(language.unwrap_or("").as_bytes());
+            hasher.update(normalized_language.as_deref().unwrap_or("").as_bytes());
             hasher.update(theme_name.as_bytes());
             hasher.update(if is_dark { "dark" } else { "light" });
             hasher.update(if show_line_numbers { "ln" } else { "" });
@@ -1010,7 +1012,7 @@ impl MarkdownRenderer {
         // Cache miss - compute syntax highlighting
         let job = Arc::new(highlight_code(
             code,
-            language,
+            normalized_language.as_deref(),
             theme_name,
             is_dark,
             show_line_numbers,
@@ -3665,6 +3667,43 @@ fn resolve_syntect_theme_name(theme_name: &str, is_dark: bool) -> &str {
     }
 }
 
+fn normalize_language_token(language: Option<&str>) -> Option<Cow<'_, str>> {
+    let raw = language?;
+    let token = raw
+        .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches("language-");
+
+    if token.is_empty() {
+        return None;
+    }
+
+    let lower = token.to_ascii_lowercase();
+    let alias = match lower.as_str() {
+        "sh" | "shell" | "zsh" => "bash",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "mts" | "cts" => "typescript",
+        "jsx" => "javascript",
+        "tsx" => "typescript",
+        "yml" => "yaml",
+        "c++" | "cc" | "cxx" | "hpp" | "hxx" => "cpp",
+        "golang" => "go",
+        "rs" => "rust",
+        "py" => "python",
+        "rb" => "ruby",
+        "ps1" | "powershell" => "powershell",
+        "md" | "mdown" | "mkd" => "markdown",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "jsonc" => "json",
+        _ => return Some(Cow::Owned(lower)),
+    };
+
+    Some(Cow::Borrowed(alias))
+}
+
 #[cfg(feature = "syntax-highlighting")]
 fn highlight_code(
     code: &str,
@@ -4213,5 +4252,35 @@ Raw HTML
     fn test_strip_inline_markers_link() {
         let input = "Go to \x02https://example.com\x02Example\x03 now";
         assert_eq!(strip_inline_markers(input), "Go to Example now");
+    }
+
+    #[test]
+    fn test_normalize_language_token_aliases() {
+        assert_eq!(
+            normalize_language_token(Some("rs")).as_deref(),
+            Some("rust")
+        );
+        assert_eq!(
+            normalize_language_token(Some("language-tsx")).as_deref(),
+            Some("typescript")
+        );
+        assert_eq!(
+            normalize_language_token(Some("shell session")).as_deref(),
+            Some("bash")
+        );
+        assert_eq!(
+            normalize_language_token(Some("yml")).as_deref(),
+            Some("yaml")
+        );
+        assert_eq!(
+            normalize_language_token(Some("C++")).as_deref(),
+            Some("cpp")
+        );
+        assert_eq!(
+            normalize_language_token(Some("unknown-lang")).as_deref(),
+            Some("unknown-lang")
+        );
+        assert!(normalize_language_token(Some("")).is_none());
+        assert!(normalize_language_token(None).is_none());
     }
 }
