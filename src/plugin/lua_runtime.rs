@@ -1,7 +1,7 @@
 //! Lua plugin runtime
 
 #[cfg(feature = "plugins")]
-use mlua::{Lua, Result as LuaResult, Function, Table, Value};
+use mlua::{Function, Lua, Result as LuaResult, Table, Value};
 
 #[cfg(feature = "plugins")]
 use std::sync::{Arc, Mutex};
@@ -100,7 +100,10 @@ impl LuaRuntime {
 
     /// Check if there are pending notifications (quick check without taking lock for long)
     pub fn has_pending_notifications(&self) -> bool {
-        self.state.lock().map(|s| !s.notifications.is_empty()).unwrap_or(false)
+        self.state
+            .lock()
+            .map(|s| !s.notifications.is_empty())
+            .unwrap_or(false)
     }
 
     /// Get and clear pending notifications from plugins
@@ -126,7 +129,10 @@ impl LuaRuntime {
 
     /// Check if there are pending annotation actions
     pub fn has_pending_annotations(&self) -> bool {
-        self.state.lock().map(|s| !s.pending_annotations.is_empty()).unwrap_or(false)
+        self.state
+            .lock()
+            .map(|s| !s.pending_annotations.is_empty())
+            .unwrap_or(false)
     }
 
     /// Get and clear pending annotation actions from plugins
@@ -140,7 +146,10 @@ impl LuaRuntime {
 
     /// Check if there are pending config changes
     pub fn has_pending_config_changes(&self) -> bool {
-        self.state.lock().map(|s| !s.pending_config_changes.is_empty()).unwrap_or(false)
+        self.state
+            .lock()
+            .map(|s| !s.pending_config_changes.is_empty())
+            .unwrap_or(false)
     }
 
     /// Get and clear pending config changes from plugins

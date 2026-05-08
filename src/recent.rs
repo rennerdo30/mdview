@@ -79,7 +79,11 @@ impl RecentFiles {
         let canonical = match path.canonicalize() {
             Ok(p) => p,
             Err(e) => {
-                log::debug!("Could not canonicalize path {:?}: {} (using original)", path, e);
+                log::debug!(
+                    "Could not canonicalize path {:?}: {} (using original)",
+                    path,
+                    e
+                );
                 path.to_path_buf()
             }
         };
@@ -102,7 +106,11 @@ impl RecentFiles {
         let canonical = match path.canonicalize() {
             Ok(p) => p,
             Err(e) => {
-                log::debug!("Could not canonicalize path {:?}: {} (using original)", path, e);
+                log::debug!(
+                    "Could not canonicalize path {:?}: {} (using original)",
+                    path,
+                    e
+                );
                 path.to_path_buf()
             }
         };
@@ -120,15 +128,15 @@ impl RecentFiles {
     /// Results are cached for performance (avoids file existence checks every frame)
     pub fn get_existing(&mut self) -> Vec<&RecentFile> {
         // Check if cache is still valid
-        let cache_valid = self.existing_cache.as_ref()
+        let cache_valid = self
+            .existing_cache
+            .as_ref()
             .is_some_and(|(_, cached_at)| cached_at.elapsed() < EXISTENCE_CACHE_DURATION);
 
         if !cache_valid {
             // Recompute and store cache
-            let existing: Vec<RecentFile> = self.files.iter()
-                .filter(|f| f.exists())
-                .cloned()
-                .collect();
+            let existing: Vec<RecentFile> =
+                self.files.iter().filter(|f| f.exists()).cloned().collect();
             self.existing_cache = Some((existing, std::time::Instant::now()));
         }
 
@@ -186,8 +194,7 @@ pub fn save_recent_files(recent: &RecentFiles) -> Result<(), std::io::Error> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let content = serde_json::to_string_pretty(recent)
-        .map_err(std::io::Error::other)?;
+    let content = serde_json::to_string_pretty(recent).map_err(std::io::Error::other)?;
 
     std::fs::write(&path, content)
 }

@@ -42,7 +42,9 @@ impl FileWatcher {
                             log::debug!("File event for: {:?}", event.path);
 
                             // Compare canonicalized paths to handle symlinks and relative paths
-                            let event_canonical = event.path.canonicalize()
+                            let event_canonical = event
+                                .path
+                                .canonicalize()
                                 .unwrap_or_else(|_| event.path.clone());
                             if event_canonical == watched_path {
                                 has_event = true;

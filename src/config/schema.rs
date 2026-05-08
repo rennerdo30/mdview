@@ -39,7 +39,6 @@ impl Default for LayoutConfig {
     }
 }
 
-
 /// General application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

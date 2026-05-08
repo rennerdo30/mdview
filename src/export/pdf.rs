@@ -1,13 +1,13 @@
 //! PDF export using printpdf
 
-use std::path::{Path, PathBuf};
 use std::io::BufWriter;
+use std::path::{Path, PathBuf};
 
-use printpdf::{BuiltinFont, Mm, PdfDocument, Image, ImageTransform};
-use pulldown_cmark::{Event, Tag, TagEnd, HeadingLevel, CodeBlockKind};
+use printpdf::{BuiltinFont, Image, ImageTransform, Mm, PdfDocument};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Tag, TagEnd};
 
-use crate::config::Config;
 use crate::config::defaults::heading_size_multiplier;
+use crate::config::Config;
 
 /// A4 page dimensions in mm
 const A4_WIDTH_MM: f32 = 210.0;
@@ -18,6 +18,7 @@ const LETTER_WIDTH_MM: f32 = 215.9;
 const LETTER_HEIGHT_MM: f32 = 279.4;
 
 /// Export markdown events to PDF
+#[allow(dead_code)]
 pub fn export_to_pdf(
     events: &[Event<'_>],
     output_path: &Path,
@@ -43,12 +44,8 @@ pub fn export_to_pdf_with_base(
     // Determine colors based on pdf_theme
     let is_dark_theme = config.export.pdf_theme.to_lowercase() == "dark";
 
-    let (doc, page1, layer1) = PdfDocument::new(
-        "Markdown Export",
-        Mm(width_mm),
-        Mm(height_mm),
-        "Layer 1",
-    );
+    let (doc, page1, layer1) =
+        PdfDocument::new("Markdown Export", Mm(width_mm), Mm(height_mm), "Layer 1");
 
     // Add built-in fonts
     let font = doc.add_builtin_font(BuiltinFont::Helvetica)?;
@@ -71,10 +68,18 @@ pub fn export_to_pdf_with_base(
         text_buffer: String::new(),
         heading_level: 0,
         list_depth: 0,
+        list_stack: Vec::new(),
         in_emphasis: false,
         in_strong: false,
         in_strikethrough: false,
         in_blockquote: false,
+        in_table: false,
+        table_alignments: Vec::new(),
+        table_row: Vec::new(),
+        table_rows: Vec::new(),
+        table_header: Vec::new(),
+        in_table_head: false,
+        task_list_marker: None,
         is_dark_theme,
         custom_heading_color: config.theme.colors.heading.clone(),
         custom_code_color: config.theme.colors.code_text.clone(),
@@ -115,6 +120,19 @@ struct TocPdfEntry {
     level: usize,
 }
 
+#[derive(Clone, Debug)]
+struct ListState {
+    next_number: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+struct TableRowLayout {
+    num_cols: usize,
+    col_width: f32,
+    chars_per_line: usize,
+    is_header: bool,
+}
+
 struct PdfExporter {
     current_page: printpdf::PdfPageIndex,
     current_layer: printpdf::PdfLayerIndex,
@@ -131,10 +149,18 @@ struct PdfExporter {
     text_buffer: String,
     heading_level: usize,
     list_depth: usize,
+    list_stack: Vec<ListState>,
     in_emphasis: bool,
     in_strong: bool,
     in_strikethrough: bool,
     in_blockquote: bool,
+    in_table: bool,
+    table_alignments: Vec<Alignment>,
+    table_row: Vec<String>,
+    table_rows: Vec<Vec<String>>,
+    table_header: Vec<String>,
+    in_table_head: bool,
+    task_list_marker: Option<bool>,
     /// Theme flag for PDF color theming
     is_dark_theme: bool,
     /// Custom heading color from config (hex)
@@ -272,7 +298,9 @@ impl PdfExporter {
     ) -> Result<(), PdfError> {
         // TOC title
         self.ensure_space(doc, 10.0)?;
-        let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+        let layer = doc
+            .get_page(self.current_page)
+            .get_layer(self.current_layer);
         layer.use_text(
             "Table of Contents",
             16.0,
@@ -293,7 +321,9 @@ impl PdfExporter {
                 _ => self.base_font_size * 0.9,
             };
 
-            let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+            let layer = doc
+                .get_page(self.current_page)
+                .get_layer(self.current_layer);
 
             // Use bold for H1, regular for others
             let entry_font = if entry.level == 1 { font_bold } else { font };
@@ -327,7 +357,9 @@ impl PdfExporter {
     ) -> Result<(), PdfError> {
         for event in events {
             match event {
-                Event::Start(Tag::Image { dest_url, title, .. }) => {
+                Event::Start(Tag::Image {
+                    dest_url, title, ..
+                }) => {
                     // Handle image inline instead of in handle_start_tag
                     self.draw_image(doc, dest_url, title)?;
                 }
@@ -344,6 +376,9 @@ impl PdfExporter {
                     self.text_buffer.push('`');
                     self.text_buffer.push_str(code);
                     self.text_buffer.push('`');
+                }
+                Event::TaskListMarker(checked) => {
+                    self.task_list_marker = Some(*checked);
                 }
                 Event::SoftBreak | Event::HardBreak => {
                     self.text_buffer.push(' ');
@@ -378,8 +413,11 @@ impl PdfExporter {
                     _ => None,
                 };
             }
-            Tag::List(_) => {
+            Tag::List(start) => {
                 self.list_depth += 1;
+                self.list_stack.push(ListState {
+                    next_number: *start,
+                });
             }
             Tag::Emphasis => {
                 self.in_emphasis = true;
@@ -392,6 +430,16 @@ impl PdfExporter {
             }
             Tag::BlockQuote(_) => {
                 self.in_blockquote = true;
+            }
+            Tag::Table(alignments) => {
+                self.in_table = true;
+                self.table_alignments = alignments.clone();
+            }
+            Tag::TableHead => {
+                self.in_table_head = true;
+            }
+            Tag::TableRow => {
+                self.table_row.clear();
             }
             _ => {}
         }
@@ -434,11 +482,14 @@ impl PdfExporter {
             }
             TagEnd::List(_) => {
                 self.list_depth = self.list_depth.saturating_sub(1);
+                self.list_stack.pop();
             }
             TagEnd::Item => {
                 let text = std::mem::take(&mut self.text_buffer);
                 if !text.is_empty() {
-                    self.draw_list_item(doc, &text, font)?;
+                    let marker =
+                        next_list_marker(&mut self.list_stack, self.task_list_marker.take());
+                    self.draw_list_item(doc, &text, font, &marker)?;
                 }
             }
             TagEnd::Emphasis => {
@@ -453,13 +504,39 @@ impl PdfExporter {
             TagEnd::BlockQuote(_) => {
                 self.in_blockquote = false;
             }
+            TagEnd::Table => {
+                self.draw_table(doc, font, font_bold)?;
+                self.in_table = false;
+                self.table_alignments.clear();
+                self.table_row.clear();
+                self.table_rows.clear();
+                self.table_header.clear();
+            }
+            TagEnd::TableHead => {
+                self.in_table_head = false;
+            }
+            TagEnd::TableRow => {
+                let row = std::mem::take(&mut self.table_row);
+                if self.in_table_head {
+                    self.table_header = row;
+                } else {
+                    self.table_rows.push(row);
+                }
+            }
+            TagEnd::TableCell => {
+                self.table_row.push(std::mem::take(&mut self.text_buffer));
+            }
             _ => {}
         }
 
         Ok(())
     }
 
-    fn ensure_space(&mut self, doc: &printpdf::PdfDocumentReference, needed: f32) -> Result<(), PdfError> {
+    fn ensure_space(
+        &mut self,
+        doc: &printpdf::PdfDocumentReference,
+        needed: f32,
+    ) -> Result<(), PdfError> {
         if self.cursor_y - needed < self.margin_mm {
             self.new_page(doc)?;
         }
@@ -467,11 +544,7 @@ impl PdfExporter {
     }
 
     fn new_page(&mut self, doc: &printpdf::PdfDocumentReference) -> Result<(), PdfError> {
-        let (page, layer) = doc.add_page(
-            Mm(self.width_mm),
-            Mm(self.height_mm),
-            "Layer 1",
-        );
+        let (page, layer) = doc.add_page(Mm(self.width_mm), Mm(self.height_mm), "Layer 1");
         self.current_page = page;
         self.current_layer = layer;
         self.cursor_y = self.height_mm - self.margin_mm;
@@ -486,7 +559,9 @@ impl PdfExporter {
 
     /// Fill the current page with background color (for dark theme)
     fn fill_page_background(&self, doc: &printpdf::PdfDocumentReference) {
-        let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+        let layer = doc
+            .get_page(self.current_page)
+            .get_layer(self.current_layer);
 
         // Dark theme background color (dark blue-gray)
         let bg_color = printpdf::Color::Rgb(printpdf::Rgb::new(0.12, 0.14, 0.18, None));
@@ -497,7 +572,10 @@ impl PdfExporter {
         let points = vec![
             (printpdf::Point::new(Mm(0.0), Mm(0.0)), false),
             (printpdf::Point::new(Mm(self.width_mm), Mm(0.0)), false),
-            (printpdf::Point::new(Mm(self.width_mm), Mm(self.height_mm)), false),
+            (
+                printpdf::Point::new(Mm(self.width_mm), Mm(self.height_mm)),
+                false,
+            ),
             (printpdf::Point::new(Mm(0.0), Mm(self.height_mm)), false),
         ];
         let rect = printpdf::Line {
@@ -517,25 +595,48 @@ impl PdfExporter {
         let font_size = self.base_font_size * size_multiplier;
         let line_height = font_size * 0.5;
 
-        self.ensure_space(doc, line_height + 3.0)?;
+        // Word wrap heading text
+        let available_width = self.width_mm - (self.margin_mm * 2.0);
+        let chars_per_line = (available_width / (font_size * 0.4)).max(1.0) as usize;
+
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+
+        for word in words {
+            if current_line.len() + word.len() + 1 > chars_per_line && !current_line.is_empty() {
+                lines.push(current_line);
+                current_line = String::new();
+            }
+            if !current_line.is_empty() {
+                current_line.push(' ');
+            }
+            current_line.push_str(word);
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        let total_height = line_height * lines.len() as f32 + 3.0;
+        self.ensure_space(doc, total_height)?;
 
         // Add spacing before heading
         self.cursor_y -= 3.0;
 
-        let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+        for line in &lines {
+            let layer = doc
+                .get_page(self.current_page)
+                .get_layer(self.current_layer);
 
-        // Apply heading color based on theme
-        layer.set_fill_color(self.heading_color());
+            // Apply heading color based on theme
+            layer.set_fill_color(self.heading_color());
 
-        layer.use_text(
-            text,
-            font_size,
-            Mm(self.margin_mm),
-            Mm(self.cursor_y),
-            font,
-        );
+            layer.use_text(line, font_size, Mm(self.margin_mm), Mm(self.cursor_y), font);
 
-        self.cursor_y -= line_height + 2.0;
+            self.cursor_y -= line_height;
+        }
+
+        self.cursor_y -= 2.0;
 
         Ok(())
     }
@@ -555,11 +656,10 @@ impl PdfExporter {
         let mut current_line = String::new();
 
         for word in words {
-            if current_line.len() + word.len() + 1 > chars_per_line
-                && !current_line.is_empty() {
-                    lines.push(current_line);
-                    current_line = String::new();
-                }
+            if current_line.len() + word.len() + 1 > chars_per_line && !current_line.is_empty() {
+                lines.push(current_line);
+                current_line = String::new();
+            }
             if !current_line.is_empty() {
                 current_line.push(' ');
             }
@@ -572,7 +672,9 @@ impl PdfExporter {
         for line in lines {
             self.ensure_space(doc, self.line_height)?;
 
-            let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+            let layer = doc
+                .get_page(self.current_page)
+                .get_layer(self.current_layer);
 
             // Apply text color based on theme
             layer.set_fill_color(self.text_color());
@@ -636,7 +738,9 @@ impl PdfExporter {
 
         // Draw background rectangle first (light gray fill)
         {
-            let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+            let layer = doc
+                .get_page(self.current_page)
+                .get_layer(self.current_layer);
             let bg_color = if self.is_dark_theme {
                 // Slightly lighter than page background for contrast
                 printpdf::Color::Rgb(printpdf::Rgb::new(0.18, 0.20, 0.25, None))
@@ -649,8 +753,14 @@ impl PdfExporter {
             let bg_bottom_y = bg_top_y - total_height;
             let points = vec![
                 (printpdf::Point::new(Mm(bg_left_x), Mm(bg_top_y)), false),
-                (printpdf::Point::new(Mm(bg_left_x + bg_width), Mm(bg_top_y)), false),
-                (printpdf::Point::new(Mm(bg_left_x + bg_width), Mm(bg_bottom_y)), false),
+                (
+                    printpdf::Point::new(Mm(bg_left_x + bg_width), Mm(bg_top_y)),
+                    false,
+                ),
+                (
+                    printpdf::Point::new(Mm(bg_left_x + bg_width), Mm(bg_bottom_y)),
+                    false,
+                ),
                 (printpdf::Point::new(Mm(bg_left_x), Mm(bg_bottom_y)), false),
             ];
             let rect = printpdf::Line {
@@ -663,7 +773,9 @@ impl PdfExporter {
         // Draw the text
         self.cursor_y -= padding;
         for line in &lines {
-            let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+            let layer = doc
+                .get_page(self.current_page)
+                .get_layer(self.current_layer);
 
             // Apply blockquote text color (muted/gray)
             layer.set_fill_color(self.blockquote_color());
@@ -682,11 +794,19 @@ impl PdfExporter {
         // Draw vertical bar on the left side
         let bar_top_y = bg_top_y;
         let bar_bottom_y = bg_top_y - total_height;
-        let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+        let layer = doc
+            .get_page(self.current_page)
+            .get_layer(self.current_layer);
 
         let points = vec![
-            (printpdf::Point::new(Mm(self.margin_mm + bar_width / 2.0), Mm(bar_top_y)), false),
-            (printpdf::Point::new(Mm(self.margin_mm + bar_width / 2.0), Mm(bar_bottom_y)), false),
+            (
+                printpdf::Point::new(Mm(self.margin_mm + bar_width / 2.0), Mm(bar_top_y)),
+                false,
+            ),
+            (
+                printpdf::Point::new(Mm(self.margin_mm + bar_width / 2.0), Mm(bar_bottom_y)),
+                false,
+            ),
         ];
 
         let line = printpdf::Line {
@@ -725,28 +845,79 @@ impl PdfExporter {
         #[cfg(feature = "syntax-highlighting")]
         if self.syntax_highlighting_enabled {
             if let Some(highlighted) = highlight_code_for_pdf(code, language, &self.syntax_theme) {
-                return self.draw_highlighted_code_block(doc, &highlighted, code_font_size, code_line_height, font);
+                return self.draw_highlighted_code_block(
+                    doc,
+                    &highlighted,
+                    code_font_size,
+                    code_line_height,
+                    font,
+                );
             }
         }
 
         // Fallback: render without highlighting
+        let code_indent = 5.0;
+        let continuation_indent = code_indent + 4.0;
+        let available_width = self.width_mm - (self.margin_mm * 2.0) - code_indent;
+        let chars_per_line = (available_width / (code_font_size * 0.4)).max(1.0) as usize;
+
         for line in code.lines() {
-            self.ensure_space(doc, code_line_height)?;
+            // Character-based wrapping for code (not word-based)
+            if line.len() <= chars_per_line {
+                self.ensure_space(doc, code_line_height)?;
 
-            let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+                let layer = doc
+                    .get_page(self.current_page)
+                    .get_layer(self.current_layer);
+                layer.set_fill_color(self.code_color());
 
-            // Apply code color based on theme
-            layer.set_fill_color(self.code_color());
+                layer.use_text(
+                    line,
+                    code_font_size,
+                    Mm(self.margin_mm + code_indent),
+                    Mm(self.cursor_y),
+                    font,
+                );
 
-            layer.use_text(
-                line,
-                code_font_size,
-                Mm(self.margin_mm + 5.0), // Indent code
-                Mm(self.cursor_y),
-                font,
-            );
+                self.cursor_y -= code_line_height;
+            } else {
+                let mut remaining = line;
+                let mut first = true;
+                while !remaining.is_empty() {
+                    let split_at = remaining.len().min(if first {
+                        chars_per_line
+                    } else {
+                        chars_per_line.saturating_sub(2)
+                    });
+                    // Ensure split is at a char boundary
+                    let split_at = floor_to_char_boundary_pdf(remaining, split_at);
+                    let (chunk, rest) = remaining.split_at(split_at);
+                    remaining = rest;
 
-            self.cursor_y -= code_line_height;
+                    self.ensure_space(doc, code_line_height)?;
+
+                    let layer = doc
+                        .get_page(self.current_page)
+                        .get_layer(self.current_layer);
+                    layer.set_fill_color(self.code_color());
+
+                    let indent = if first {
+                        code_indent
+                    } else {
+                        continuation_indent
+                    };
+                    layer.use_text(
+                        chunk,
+                        code_font_size,
+                        Mm(self.margin_mm + indent),
+                        Mm(self.cursor_y),
+                        font,
+                    );
+
+                    self.cursor_y -= code_line_height;
+                    first = false;
+                }
+            }
         }
 
         self.cursor_y -= 2.0;
@@ -759,40 +930,214 @@ impl PdfExporter {
         doc: &printpdf::PdfDocumentReference,
         text: &str,
         font: &printpdf::IndirectFontRef,
+        marker: &str,
     ) -> Result<(), PdfError> {
-        self.ensure_space(doc, self.line_height)?;
+        let indent = self.list_depth.saturating_sub(1) as f32 * 5.0;
+        let marker_width = (marker.chars().count() as f32 + 1.0) * self.font_size * 0.4;
+        let text_indent = indent + marker_width;
 
-        let indent = self.list_depth as f32 * 5.0;
-        let bullet = "- ";
+        // Word wrap list item text
+        let available_width = self.width_mm - (self.margin_mm * 2.0) - text_indent;
+        let chars_per_line = (available_width / (self.font_size * 0.4)).max(1.0) as usize;
 
-        let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
 
-        // Apply text color based on theme
-        layer.set_fill_color(self.text_color());
+        for word in words {
+            if current_line.len() + word.len() + 1 > chars_per_line && !current_line.is_empty() {
+                lines.push(current_line);
+                current_line = String::new();
+            }
+            if !current_line.is_empty() {
+                current_line.push(' ');
+            }
+            current_line.push_str(word);
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
 
-        layer.use_text(
-            format!("{}{}", bullet, text),
-            self.font_size,
-            Mm(self.margin_mm + indent),
-            Mm(self.cursor_y),
-            font,
-        );
+        for (i, line) in lines.iter().enumerate() {
+            self.ensure_space(doc, self.line_height)?;
 
-        self.cursor_y -= self.line_height;
+            let layer = doc
+                .get_page(self.current_page)
+                .get_layer(self.current_layer);
+
+            // Apply text color based on theme
+            layer.set_fill_color(self.text_color());
+
+            if i == 0 {
+                // First line includes marker
+                layer.use_text(
+                    format!("{} {}", marker, line),
+                    self.font_size,
+                    Mm(self.margin_mm + indent),
+                    Mm(self.cursor_y),
+                    font,
+                );
+            } else {
+                // Continuation lines indented to align with text start
+                layer.use_text(
+                    line,
+                    self.font_size,
+                    Mm(self.margin_mm + text_indent),
+                    Mm(self.cursor_y),
+                    font,
+                );
+            }
+
+            self.cursor_y -= self.line_height;
+        }
 
         Ok(())
     }
 
-    fn draw_horizontal_rule(&mut self, doc: &printpdf::PdfDocumentReference) -> Result<(), PdfError> {
+    fn draw_table(
+        &mut self,
+        doc: &printpdf::PdfDocumentReference,
+        font: &printpdf::IndirectFontRef,
+        font_bold: &printpdf::IndirectFontRef,
+    ) -> Result<(), PdfError> {
+        let num_cols = self
+            .table_header
+            .len()
+            .max(self.table_rows.iter().map(Vec::len).max().unwrap_or(0));
+        if num_cols == 0 {
+            return Ok(());
+        }
+
+        let table_width = self.width_mm - (self.margin_mm * 2.0);
+        let col_width = table_width / num_cols as f32;
+        let chars_per_line = ((col_width - 4.0) / (self.font_size * 0.4)).max(1.0) as usize;
+
+        if !self.table_header.is_empty() {
+            let header = self.table_header.clone();
+            self.draw_table_row(
+                doc,
+                &header,
+                TableRowLayout {
+                    num_cols,
+                    col_width,
+                    chars_per_line,
+                    is_header: true,
+                },
+                font_bold,
+            )?;
+        }
+
+        for row in self.table_rows.clone() {
+            self.draw_table_row(
+                doc,
+                &row,
+                TableRowLayout {
+                    num_cols,
+                    col_width,
+                    chars_per_line,
+                    is_header: false,
+                },
+                font,
+            )?;
+        }
+
+        self.cursor_y -= 4.0;
+        Ok(())
+    }
+
+    fn draw_table_row(
+        &mut self,
+        doc: &printpdf::PdfDocumentReference,
+        row: &[String],
+        layout: TableRowLayout,
+        font: &printpdf::IndirectFontRef,
+    ) -> Result<(), PdfError> {
+        let cell_padding = 2.0;
+        let wrapped_cells: Vec<Vec<String>> = (0..layout.num_cols)
+            .map(|col| {
+                wrap_text_for_pdf(
+                    row.get(col).map(|cell| cell.as_str()).unwrap_or(""),
+                    layout.chars_per_line,
+                )
+            })
+            .collect();
+
+        let max_lines = wrapped_cells
+            .iter()
+            .map(|lines| lines.len().max(1))
+            .max()
+            .unwrap_or(1);
+        let row_height = max_lines as f32 * self.line_height + cell_padding * 2.0;
+        self.ensure_space(doc, row_height + 1.0)?;
+
+        let row_top = self.cursor_y;
+        let row_bottom = self.cursor_y - row_height;
+
+        for (col, lines) in wrapped_cells.iter().enumerate() {
+            let x = self.margin_mm + col as f32 * layout.col_width;
+            let layer = doc
+                .get_page(self.current_page)
+                .get_layer(self.current_layer);
+            let border_color = if self.is_dark_theme {
+                printpdf::Color::Rgb(printpdf::Rgb::new(0.42, 0.47, 0.56, None))
+            } else {
+                printpdf::Color::Rgb(printpdf::Rgb::new(0.75, 0.78, 0.82, None))
+            };
+            layer.set_outline_color(border_color);
+            layer.set_outline_thickness(0.3);
+            let border = printpdf::Line {
+                points: vec![
+                    (printpdf::Point::new(Mm(x), Mm(row_top)), false),
+                    (
+                        printpdf::Point::new(Mm(x + layout.col_width), Mm(row_top)),
+                        false,
+                    ),
+                    (
+                        printpdf::Point::new(Mm(x + layout.col_width), Mm(row_bottom)),
+                        false,
+                    ),
+                    (printpdf::Point::new(Mm(x), Mm(row_bottom)), false),
+                ],
+                is_closed: true,
+            };
+            layer.add_line(border);
+            layer.set_fill_color(if layout.is_header {
+                self.heading_color()
+            } else {
+                self.text_color()
+            });
+
+            for (line_idx, line) in lines.iter().enumerate() {
+                let text_y = row_top - cell_padding - line_idx as f32 * self.line_height;
+                layer.use_text(line, self.font_size, Mm(x + cell_padding), Mm(text_y), font);
+            }
+        }
+
+        self.cursor_y -= row_height;
+        Ok(())
+    }
+
+    fn draw_horizontal_rule(
+        &mut self,
+        doc: &printpdf::PdfDocumentReference,
+    ) -> Result<(), PdfError> {
         self.ensure_space(doc, 5.0)?;
 
         self.cursor_y -= 2.0;
 
-        let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+        let layer = doc
+            .get_page(self.current_page)
+            .get_layer(self.current_layer);
 
         let points = vec![
-            (printpdf::Point::new(Mm(self.margin_mm), Mm(self.cursor_y)), false),
-            (printpdf::Point::new(Mm(self.width_mm - self.margin_mm), Mm(self.cursor_y)), false),
+            (
+                printpdf::Point::new(Mm(self.margin_mm), Mm(self.cursor_y)),
+                false,
+            ),
+            (
+                printpdf::Point::new(Mm(self.width_mm - self.margin_mm), Mm(self.cursor_y)),
+                false,
+            ),
         ];
 
         let line = printpdf::Line {
@@ -851,27 +1196,7 @@ impl PdfExporter {
 
     /// Resolve a relative image path to an absolute path
     fn resolve_image_path(&self, url: &str) -> Option<PathBuf> {
-        // If it's already absolute, use it directly
-        let path = PathBuf::from(url);
-        if path.is_absolute() {
-            return Some(path);
-        }
-
-        // Try to resolve relative to base path
-        if let Some(base) = &self.base_path {
-            let resolved = base.join(url);
-            if resolved.exists() {
-                return Some(resolved);
-            }
-        }
-
-        // Try current directory as fallback
-        let cwd_path = std::env::current_dir().ok()?.join(url);
-        if cwd_path.exists() {
-            return Some(cwd_path);
-        }
-
-        None
+        resolve_pdf_image_path(self.base_path.as_deref(), url)
     }
 
     /// Load and embed an image into the PDF
@@ -887,7 +1212,8 @@ impl PdfExporter {
             .map_err(|e| PdfError::Io(format!("Failed to read image: {}", e)))?;
 
         // Try to create an image decoder based on file extension
-        let extension = path.extension()
+        let extension = path
+            .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_lowercase())
             .unwrap_or_default();
@@ -933,7 +1259,10 @@ impl PdfExporter {
                 (img, w, h)
             }
             _ => {
-                return Err(PdfError::Io(format!("Unsupported image format: {}", extension)));
+                return Err(PdfError::Io(format!(
+                    "Unsupported image format: {}",
+                    extension
+                )));
             }
         };
 
@@ -955,7 +1284,9 @@ impl PdfExporter {
         self.ensure_space(doc, final_height_mm + 5.0)?;
 
         // Get the current layer
-        let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+        let layer = doc
+            .get_page(self.current_page)
+            .get_layer(self.current_layer);
 
         // Calculate position (images are positioned from bottom-left)
         let x = self.margin_mm;
@@ -994,17 +1325,33 @@ struct HighlightedLine {
 
 /// Highlighted code ready for PDF rendering
 #[cfg(feature = "syntax-highlighting")]
+/// Find the largest byte index <= `pos` that is a valid char boundary in `s`.
+fn floor_to_char_boundary_pdf(s: &str, pos: usize) -> usize {
+    if pos >= s.len() {
+        return s.len();
+    }
+    let mut idx = pos;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
 struct HighlightedCode {
     lines: Vec<HighlightedLine>,
 }
 
 /// Highlight code for PDF export using syntect
 #[cfg(feature = "syntax-highlighting")]
-fn highlight_code_for_pdf(code: &str, language: Option<&str>, theme_name: &str) -> Option<HighlightedCode> {
+fn highlight_code_for_pdf(
+    code: &str,
+    language: Option<&str>,
+    theme_name: &str,
+) -> Option<HighlightedCode> {
+    use std::sync::OnceLock;
+    use syntect::easy::HighlightLines;
     use syntect::highlighting::ThemeSet;
     use syntect::parsing::SyntaxSet;
-    use syntect::easy::HighlightLines;
-    use std::sync::OnceLock;
 
     // Lazy-load syntax and theme sets
     static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
@@ -1019,7 +1366,9 @@ fn highlight_code_for_pdf(code: &str, language: Option<&str>, theme_name: &str) 
         .unwrap_or_else(|| ss.find_syntax_plain_text());
 
     // Use theme from config, falling back to base16-ocean.dark
-    let theme = ts.themes.get(theme_name)
+    let theme = ts
+        .themes
+        .get(theme_name)
         .or_else(|| ts.themes.get("base16-ocean.dark"))
         .or_else(|| ts.themes.values().next())?;
 
@@ -1070,7 +1419,9 @@ impl PdfExporter {
         for line in &highlighted.lines {
             self.ensure_space(doc, code_line_height)?;
 
-            let layer = doc.get_page(self.current_page).get_layer(self.current_layer);
+            let layer = doc
+                .get_page(self.current_page)
+                .get_layer(self.current_layer);
             let mut x_offset = self.margin_mm + 5.0;
 
             for token in &line.tokens {
@@ -1105,6 +1456,122 @@ impl PdfExporter {
     }
 }
 
+fn next_list_marker(list_stack: &mut [ListState], task_marker: Option<bool>) -> String {
+    if let Some(checked) = task_marker {
+        return if checked {
+            "[x]".to_string()
+        } else {
+            "[ ]".to_string()
+        };
+    }
+
+    match list_stack
+        .last_mut()
+        .and_then(|state| state.next_number.as_mut())
+    {
+        Some(next_number) => {
+            let marker = format!("{}.", *next_number);
+            *next_number += 1;
+            marker
+        }
+        None => "-".to_string(),
+    }
+}
+
+fn wrap_text_for_pdf(text: &str, chars_per_line: usize) -> Vec<String> {
+    if text.trim().is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+
+    for word in text.split_whitespace() {
+        if word.chars().count() > chars_per_line {
+            if !current_line.is_empty() {
+                lines.push(std::mem::take(&mut current_line));
+            }
+
+            let mut remaining = word;
+            while !remaining.is_empty() {
+                let mut split_at = remaining.len();
+                for (char_count, (idx, ch)) in remaining.char_indices().enumerate() {
+                    if char_count == chars_per_line {
+                        split_at = idx;
+                        break;
+                    }
+                    split_at = idx + ch.len_utf8();
+                }
+
+                let split_at = floor_to_char_boundary_pdf(remaining, split_at);
+                let (chunk, rest) = remaining.split_at(split_at);
+                lines.push(chunk.to_string());
+                remaining = rest;
+            }
+            continue;
+        }
+
+        let pending_len = if current_line.is_empty() {
+            word.chars().count()
+        } else {
+            current_line.chars().count() + 1 + word.chars().count()
+        };
+
+        if pending_len > chars_per_line && !current_line.is_empty() {
+            lines.push(std::mem::take(&mut current_line));
+        }
+
+        if !current_line.is_empty() {
+            current_line.push(' ');
+        }
+        current_line.push_str(word);
+    }
+
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn resolve_pdf_image_path(base_path: Option<&Path>, url: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(url);
+
+    if path.is_absolute() {
+        return path.exists().then(|| path.canonicalize().ok()).flatten();
+    }
+
+    if let Some(base) = base_path {
+        let full_path = base.join(&path);
+        if full_path.exists() {
+            if let Ok(canonical) = full_path.canonicalize() {
+                if let Ok(canonical_base) = base.canonicalize() {
+                    if canonical.starts_with(&canonical_base) {
+                        return Some(canonical);
+                    }
+                    log::warn!(
+                        "PDF image path traversal blocked: {:?} is outside {:?}",
+                        url,
+                        base
+                    );
+                    return None;
+                }
+                return Some(canonical);
+            }
+        }
+    }
+
+    if path.exists() {
+        return path.canonicalize().ok();
+    }
+
+    None
+}
+
 /// PDF export errors
 #[derive(Debug)]
 pub enum PdfError {
@@ -1132,11 +1599,47 @@ impl From<printpdf::Error> for PdfError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_page_dimensions() {
         // A4 should be 210x297mm
         assert!((A4_WIDTH_MM - 210.0).abs() < 0.1);
         assert!((A4_HEIGHT_MM - 297.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_next_list_marker_handles_ordered_and_tasks() {
+        let mut ordered = vec![ListState {
+            next_number: Some(2),
+        }];
+        assert_eq!(next_list_marker(&mut ordered, None), "2.");
+        assert_eq!(next_list_marker(&mut ordered, None), "3.");
+
+        let mut unordered = vec![ListState { next_number: None }];
+        assert_eq!(next_list_marker(&mut unordered, Some(true)), "[x]");
+        assert_eq!(next_list_marker(&mut unordered, Some(false)), "[ ]");
+        assert_eq!(next_list_marker(&mut unordered, None), "-");
+    }
+
+    #[test]
+    fn test_wrap_text_for_pdf_splits_long_words() {
+        let lines = wrap_text_for_pdf("supercalifragilisticexpialidocious", 8);
+        assert!(lines.iter().all(|line| line.chars().count() <= 8));
+        assert_eq!(lines.concat(), "supercalifragilisticexpialidocious");
+    }
+
+    #[test]
+    fn test_resolve_pdf_image_path_blocks_traversal() {
+        let dir = tempdir().unwrap();
+        let docs = dir.path().join("docs");
+        let assets = dir.path().join("assets");
+        fs::create_dir_all(&docs).unwrap();
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("image.png"), b"png").unwrap();
+
+        let resolved = resolve_pdf_image_path(Some(&docs), "../assets/image.png");
+        assert!(resolved.is_none());
     }
 }

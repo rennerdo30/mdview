@@ -10,8 +10,16 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "plugins")]
 #[derive(Debug, Clone)]
 pub enum PendingAnnotationAction {
-    AddHighlight { start: usize, end: usize, color: String },
-    AddNote { start: usize, end: usize, text: String },
+    AddHighlight {
+        start: usize,
+        end: usize,
+        color: String,
+    },
+    AddNote {
+        start: usize,
+        end: usize,
+        text: String,
+    },
 }
 
 /// A menu item registered by a plugin
@@ -95,11 +103,11 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
 
     // get_content() - returns the current markdown content
     let state_clone = Arc::clone(&plugin_state);
-    let get_content = lua.create_function(move |_, ()| {
-        match state_clone.lock() {
-            Ok(state) => Ok(state.content.clone()),
-            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
-        }
+    let get_content = lua.create_function(move |_, ()| match state_clone.lock() {
+        Ok(state) => Ok(state.content.clone()),
+        Err(_) => Err(mlua::Error::RuntimeError(
+            "Failed to acquire state lock".into(),
+        )),
     })?;
     mdview.set("get_content", get_content)?;
 
@@ -113,52 +121,63 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
                 state.notifications.push((msg, level));
                 Ok(())
             }
-            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+            Err(_) => Err(mlua::Error::RuntimeError(
+                "Failed to acquire state lock".into(),
+            )),
         }
     })?;
     mdview.set("notify", notify)?;
 
     // add_highlight(start, end, color) - create a highlight annotation
     let state_clone = Arc::clone(&plugin_state);
-    let add_highlight = lua.create_function(move |_, (start, end, color): (usize, usize, String)| {
-        match state_clone.lock() {
+    let add_highlight = lua.create_function(
+        move |_, (start, end, color): (usize, usize, String)| match state_clone.lock() {
             Ok(mut state) => {
-                state.pending_annotations.push(PendingAnnotationAction::AddHighlight { start, end, color });
+                state
+                    .pending_annotations
+                    .push(PendingAnnotationAction::AddHighlight { start, end, color });
                 Ok(())
             }
-            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
-        }
-    })?;
+            Err(_) => Err(mlua::Error::RuntimeError(
+                "Failed to acquire state lock".into(),
+            )),
+        },
+    )?;
     mdview.set("add_highlight", add_highlight)?;
 
     // add_note(start, end, text) - create a note annotation
     let state_clone = Arc::clone(&plugin_state);
-    let add_note = lua.create_function(move |_, (start, end, text): (usize, usize, String)| {
-        match state_clone.lock() {
-            Ok(mut state) => {
-                state.pending_annotations.push(PendingAnnotationAction::AddNote { start, end, text });
-                Ok(())
-            }
-            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
-        }
-    })?;
+    let add_note =
+        lua.create_function(
+            move |_, (start, end, text): (usize, usize, String)| match state_clone.lock() {
+                Ok(mut state) => {
+                    state
+                        .pending_annotations
+                        .push(PendingAnnotationAction::AddNote { start, end, text });
+                    Ok(())
+                }
+                Err(_) => Err(mlua::Error::RuntimeError(
+                    "Failed to acquire state lock".into(),
+                )),
+            },
+        )?;
     mdview.set("add_note", add_note)?;
 
     // get_setting(key) - read a config value
     let state_clone = Arc::clone(&plugin_state);
-    let get_setting = lua.create_function(move |lua, key: String| {
-        match state_clone.lock() {
-            Ok(state) => {
-                match key.as_str() {
-                    "theme" => Ok(Value::String(lua.create_string(&state.config_snapshot.theme)?)),
-                    "hot_reload" => Ok(Value::Boolean(state.config_snapshot.hot_reload)),
-                    "show_toc" => Ok(Value::Boolean(state.config_snapshot.show_toc)),
-                    "syntax_highlighting" => Ok(Value::Boolean(state.config_snapshot.syntax_highlighting)),
-                    _ => Ok(Value::Nil),
-                }
-            }
-            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
-        }
+    let get_setting = lua.create_function(move |lua, key: String| match state_clone.lock() {
+        Ok(state) => match key.as_str() {
+            "theme" => Ok(Value::String(
+                lua.create_string(&state.config_snapshot.theme)?,
+            )),
+            "hot_reload" => Ok(Value::Boolean(state.config_snapshot.hot_reload)),
+            "show_toc" => Ok(Value::Boolean(state.config_snapshot.show_toc)),
+            "syntax_highlighting" => Ok(Value::Boolean(state.config_snapshot.syntax_highlighting)),
+            _ => Ok(Value::Nil),
+        },
+        Err(_) => Err(mlua::Error::RuntimeError(
+            "Failed to acquire state lock".into(),
+        )),
     })?;
     mdview.set("get_setting", get_setting)?;
 
@@ -177,7 +196,9 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
                 state.pending_config_changes.push((key, value_str));
                 Ok(())
             }
-            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
+            Err(_) => Err(mlua::Error::RuntimeError(
+                "Failed to acquire state lock".into(),
+            )),
         }
     })?;
     mdview.set("set_setting", set_setting)?;
@@ -185,26 +206,36 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
     // register_menu_item(id, label, callback) - add a custom menu item to the Plugins menu
     // callback is the name of a global Lua function to call when clicked
     let state_clone = Arc::clone(&plugin_state);
-    let register_menu_item = lua.create_function(move |_, (id, label, callback): (String, String, String)| {
-        match state_clone.lock() {
-            Ok(mut state) => {
-                // Check for duplicate ID
-                if state.menu_items.iter().any(|item| item.id == id) {
-                    return Err(mlua::Error::RuntimeError(format!("Menu item with id '{}' already exists", id)));
+    let register_menu_item =
+        lua.create_function(move |_, (id, label, callback): (String, String, String)| {
+            match state_clone.lock() {
+                Ok(mut state) => {
+                    // Check for duplicate ID
+                    if state.menu_items.iter().any(|item| item.id == id) {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "Menu item with id '{}' already exists",
+                            id
+                        )));
+                    }
+                    log::info!("[plugin] Registered menu item: {}", label);
+                    state.menu_items.push(PluginMenuItem {
+                        id,
+                        label,
+                        callback,
+                    });
+                    Ok(())
                 }
-                log::info!("[plugin] Registered menu item: {}", label);
-                state.menu_items.push(PluginMenuItem { id, label, callback });
-                Ok(())
+                Err(_) => Err(mlua::Error::RuntimeError(
+                    "Failed to acquire state lock".into(),
+                )),
             }
-            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
-        }
-    })?;
+        })?;
     mdview.set("register_menu_item", register_menu_item)?;
 
     // unregister_menu_item(id) - remove a custom menu item
     let state_clone = Arc::clone(&plugin_state);
-    let unregister_menu_item = lua.create_function(move |_, id: String| {
-        match state_clone.lock() {
+    let unregister_menu_item =
+        lua.create_function(move |_, id: String| match state_clone.lock() {
             Ok(mut state) => {
                 let before = state.menu_items.len();
                 state.menu_items.retain(|item| item.id != id);
@@ -213,9 +244,10 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
                 }
                 Ok(())
             }
-            Err(_) => Err(mlua::Error::RuntimeError("Failed to acquire state lock".into())),
-        }
-    })?;
+            Err(_) => Err(mlua::Error::RuntimeError(
+                "Failed to acquire state lock".into(),
+            )),
+        })?;
     mdview.set("unregister_menu_item", unregister_menu_item)?;
 
     // Register to globals
@@ -232,32 +264,32 @@ pub fn register_api(lua: &Lua, plugin_state: Arc<Mutex<PluginState>>) -> LuaResu
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginHook {
     /// Called when a file is opened
-    OnFileOpen,
+    FileOpen,
     /// Called when a file is closed
-    OnFileClose,
+    FileClose,
     /// Called before rendering
-    OnPreRender,
+    PreRender,
     /// Called after rendering
-    OnPostRender,
+    PostRender,
     /// Called when theme changes
-    OnThemeChange,
+    ThemeChange,
     /// Called when annotation is added
-    OnAnnotationAdd,
+    AnnotationAdd,
     /// Called when annotation is removed
-    OnAnnotationRemove,
+    AnnotationRemove,
 }
 
 impl PluginHook {
     /// Get the hook name as used in Lua
     pub fn lua_name(&self) -> &'static str {
         match self {
-            PluginHook::OnFileOpen => "on_file_open",
-            PluginHook::OnFileClose => "on_file_close",
-            PluginHook::OnPreRender => "on_pre_render",
-            PluginHook::OnPostRender => "on_post_render",
-            PluginHook::OnThemeChange => "on_theme_change",
-            PluginHook::OnAnnotationAdd => "on_annotation_add",
-            PluginHook::OnAnnotationRemove => "on_annotation_remove",
+            PluginHook::FileOpen => "on_file_open",
+            PluginHook::FileClose => "on_file_close",
+            PluginHook::PreRender => "on_pre_render",
+            PluginHook::PostRender => "on_post_render",
+            PluginHook::ThemeChange => "on_theme_change",
+            PluginHook::AnnotationAdd => "on_annotation_add",
+            PluginHook::AnnotationRemove => "on_annotation_remove",
         }
     }
 }
@@ -268,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_hook_names() {
-        assert_eq!(PluginHook::OnFileOpen.lua_name(), "on_file_open");
-        assert_eq!(PluginHook::OnThemeChange.lua_name(), "on_theme_change");
+        assert_eq!(PluginHook::FileOpen.lua_name(), "on_file_open");
+        assert_eq!(PluginHook::ThemeChange.lua_name(), "on_theme_change");
     }
 }

@@ -33,7 +33,11 @@ pub fn load_annotations(markdown_path: &Path) -> Result<AnnotationStore, Storage
     if metadata.len() > MAX_ANNOTATION_FILE_SIZE {
         return Err(StorageError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("Annotation file too large ({} bytes, max {})", metadata.len(), MAX_ANNOTATION_FILE_SIZE),
+            format!(
+                "Annotation file too large ({} bytes, max {})",
+                metadata.len(),
+                MAX_ANNOTATION_FILE_SIZE
+            ),
         )));
     }
 
@@ -44,10 +48,7 @@ pub fn load_annotations(markdown_path: &Path) -> Result<AnnotationStore, Storage
 }
 
 /// Save annotations to the sidecar file
-pub fn save_annotations(
-    markdown_path: &Path,
-    store: &AnnotationStore,
-) -> Result<(), StorageError> {
+pub fn save_annotations(markdown_path: &Path, store: &AnnotationStore) -> Result<(), StorageError> {
     // Don't create file if there are no annotations
     if store.is_empty() {
         // Remove existing file if present

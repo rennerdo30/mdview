@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use egui::{Color32, FontId, Rounding, Shadow, Stroke, Style, Visuals, Vec2};
+use egui::{Color32, FontId, Rounding, Shadow, Stroke, Style, Vec2, Visuals};
 
 use crate::config::Config;
 
@@ -13,35 +13,35 @@ pub mod palette {
     use egui::Color32;
 
     // Base colors - deep, rich backgrounds
-    pub const BG_DARKEST: Color32 = Color32::from_rgb(13, 13, 15);      // #0d0d0f
-    pub const BG_DARK: Color32 = Color32::from_rgb(18, 18, 22);         // #121216
-    pub const BG_BASE: Color32 = Color32::from_rgb(24, 24, 30);         // #18181e
-    pub const BG_ELEVATED: Color32 = Color32::from_rgb(32, 32, 40);     // #202028
-    pub const BG_HOVER: Color32 = Color32::from_rgb(42, 42, 52);        // #2a2a34
-    pub const BG_ACTIVE: Color32 = Color32::from_rgb(52, 52, 64);       // #343440
+    pub const BG_DARKEST: Color32 = Color32::from_rgb(13, 13, 15); // #0d0d0f
+    pub const BG_DARK: Color32 = Color32::from_rgb(18, 18, 22); // #121216
+    pub const BG_BASE: Color32 = Color32::from_rgb(24, 24, 30); // #18181e
+    pub const BG_ELEVATED: Color32 = Color32::from_rgb(32, 32, 40); // #202028
+    pub const BG_HOVER: Color32 = Color32::from_rgb(42, 42, 52); // #2a2a34
+    pub const BG_ACTIVE: Color32 = Color32::from_rgb(52, 52, 64); // #343440
 
     // Text colors - carefully balanced for readability
-    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(237, 237, 242);   // #edeff2
+    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(237, 237, 242); // #edeff2
     pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(160, 160, 176); // #a0a0b0
-    pub const TEXT_MUTED: Color32 = Color32::from_rgb(100, 100, 116);     // #646474
-    pub const TEXT_DISABLED: Color32 = Color32::from_rgb(70, 70, 82);     // #464652
+    pub const TEXT_MUTED: Color32 = Color32::from_rgb(100, 100, 116); // #646474
+    pub const TEXT_DISABLED: Color32 = Color32::from_rgb(70, 70, 82); // #464652
 
     // Accent colors - teal/cyan for a distinctive look
-    pub const ACCENT: Color32 = Color32::from_rgb(56, 189, 186);        // #38bdba - teal
-    pub const ACCENT_HOVER: Color32 = Color32::from_rgb(72, 205, 202);  // #48cdca
-    pub const ACCENT_MUTED: Color32 = Color32::from_rgb(56, 189, 186);  // with alpha
+    pub const ACCENT: Color32 = Color32::from_rgb(56, 189, 186); // #38bdba - teal
+    pub const ACCENT_HOVER: Color32 = Color32::from_rgb(72, 205, 202); // #48cdca
+    pub const ACCENT_MUTED: Color32 = Color32::from_rgb(56, 189, 186); // with alpha
 
     // Semantic colors
-    pub const SUCCESS: Color32 = Color32::from_rgb(80, 200, 120);       // #50c878
-    pub const WARNING: Color32 = Color32::from_rgb(255, 183, 77);       // #ffb74d
-    pub const ERROR: Color32 = Color32::from_rgb(239, 83, 80);          // #ef5350
-    pub const WARNING_BG: Color32 = Color32::from_rgb(80, 40, 40);      // dark warning bg
-    pub const WARNING_TEXT: Color32 = Color32::from_rgb(255, 180, 180);  // dark warning text
+    pub const SUCCESS: Color32 = Color32::from_rgb(80, 200, 120); // #50c878
+    pub const WARNING: Color32 = Color32::from_rgb(255, 183, 77); // #ffb74d
+    pub const ERROR: Color32 = Color32::from_rgb(239, 83, 80); // #ef5350
+    pub const WARNING_BG: Color32 = Color32::from_rgb(80, 40, 40); // dark warning bg
+    pub const WARNING_TEXT: Color32 = Color32::from_rgb(255, 180, 180); // dark warning text
 
     // Border colors
-    pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(38, 38, 48);   // #262630
-    pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(50, 50, 62);  // #32323e
-    pub const BORDER_STRONG: Color32 = Color32::from_rgb(65, 65, 80);   // #414150
+    pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(38, 38, 48); // #262630
+    pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(50, 50, 62); // #32323e
+    pub const BORDER_STRONG: Color32 = Color32::from_rgb(65, 65, 80); // #414150
 
     // Selection - using a semi-transparent teal
     pub const SELECTION: Color32 = Color32::from_rgb(40, 60, 70);
@@ -50,23 +50,23 @@ pub mod palette {
     pub mod light {
         use egui::Color32;
 
-        pub const BG_BASE: Color32 = Color32::from_rgb(252, 252, 253);     // #fcfcfd
+        pub const BG_BASE: Color32 = Color32::from_rgb(252, 252, 253); // #fcfcfd
         pub const BG_ELEVATED: Color32 = Color32::from_rgb(255, 255, 255); // #ffffff
-        pub const BG_HOVER: Color32 = Color32::from_rgb(245, 245, 248);    // #f5f5f8
-        pub const BG_ACTIVE: Color32 = Color32::from_rgb(225, 225, 235);   // #e1e1eb
-        pub const BG_SIDEBAR: Color32 = Color32::from_rgb(248, 248, 250);  // #f8f8fa
+        pub const BG_HOVER: Color32 = Color32::from_rgb(245, 245, 248); // #f5f5f8
+        pub const BG_ACTIVE: Color32 = Color32::from_rgb(225, 225, 235); // #e1e1eb
+        pub const BG_SIDEBAR: Color32 = Color32::from_rgb(248, 248, 250); // #f8f8fa
 
-        pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(28, 28, 35);   // #1c1c23
-        pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(90, 90, 105);// #5a5a69
-        pub const TEXT_MUTED: Color32 = Color32::from_rgb(140, 140, 155);  // #8c8c9b
+        pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(28, 28, 35); // #1c1c23
+        pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(90, 90, 105); // #5a5a69
+        pub const TEXT_MUTED: Color32 = Color32::from_rgb(140, 140, 155); // #8c8c9b
         pub const TEXT_DISABLED: Color32 = Color32::from_rgb(180, 180, 190); // #b4b4be
 
         pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(235, 235, 240);
         pub const BORDER_DEFAULT: Color32 = Color32::from_rgb(220, 220, 228);
 
-        pub const ACCENT: Color32 = Color32::from_rgb(45, 160, 158);      // darker teal for contrast
-        pub const WARNING_BG: Color32 = Color32::from_rgb(255, 240, 240);   // light warning bg
-        pub const WARNING_TEXT: Color32 = Color32::from_rgb(180, 60, 60);    // light warning text
+        pub const ACCENT: Color32 = Color32::from_rgb(45, 160, 158); // darker teal for contrast
+        pub const WARNING_BG: Color32 = Color32::from_rgb(255, 240, 240); // light warning bg
+        pub const WARNING_TEXT: Color32 = Color32::from_rgb(180, 60, 60); // light warning text
     }
 }
 
@@ -101,10 +101,9 @@ pub fn create_style(theme_name: &str, config: &Config) -> Style {
         egui::TextStyle::Small,
         FontId::proportional(base_size * 0.85),
     );
-    style.text_styles.insert(
-        egui::TextStyle::Body,
-        FontId::proportional(base_size),
-    );
+    style
+        .text_styles
+        .insert(egui::TextStyle::Body, FontId::proportional(base_size));
     style.text_styles.insert(
         egui::TextStyle::Button,
         FontId::proportional(base_size * 0.95),
@@ -132,15 +131,24 @@ fn apply_dark_theme(style: &mut Style, config: &Config) {
     let mut visuals = Visuals::dark();
 
     // Get custom colors or fall back to defaults
-    let bg_color = config.theme.colors.background
+    let bg_color = config
+        .theme
+        .colors
+        .background
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::BG_BASE);
-    let code_bg_color = config.theme.colors.code_background
+    let code_bg_color = config
+        .theme
+        .colors
+        .code_background
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::BG_DARK);
-    let sidebar_bg = config.theme.colors.sidebar_background
+    let sidebar_bg = config
+        .theme
+        .colors
+        .sidebar_background
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::BG_DARK);
@@ -153,14 +161,20 @@ fn apply_dark_theme(style: &mut Style, config: &Config) {
     visuals.code_bg_color = code_bg_color;
 
     // Text - use custom color if provided
-    let text_color = config.theme.colors.text
+    let text_color = config
+        .theme
+        .colors
+        .text
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::TEXT_PRIMARY);
     visuals.override_text_color = Some(text_color);
 
     // Selection - use custom color if provided
-    let selection_color = config.theme.colors.selection
+    let selection_color = config
+        .theme
+        .colors
+        .selection
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::SELECTION);
@@ -168,7 +182,10 @@ fn apply_dark_theme(style: &mut Style, config: &Config) {
     visuals.selection.stroke = Stroke::new(1.0, palette::ACCENT);
 
     // Hyperlinks - use custom link color if provided
-    let link_color = config.theme.colors.link
+    let link_color = config
+        .theme
+        .colors
+        .link
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::ACCENT);
@@ -235,11 +252,17 @@ fn apply_light_theme(style: &mut Style, config: &Config) {
     let mut visuals = Visuals::light();
 
     // Get custom colors or fall back to defaults
-    let bg_color = config.theme.colors.background
+    let bg_color = config
+        .theme
+        .colors
+        .background
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::light::BG_BASE);
-    let code_bg_color = config.theme.colors.code_background
+    let code_bg_color = config
+        .theme
+        .colors
+        .code_background
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::light::BG_HOVER);
@@ -251,21 +274,30 @@ fn apply_light_theme(style: &mut Style, config: &Config) {
     visuals.code_bg_color = code_bg_color;
 
     // Text - use custom color if provided
-    let text_color = config.theme.colors.text
+    let text_color = config
+        .theme
+        .colors
+        .text
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::light::TEXT_PRIMARY);
     visuals.override_text_color = Some(text_color);
 
     // Hyperlinks - use custom link color if provided
-    let link_color = config.theme.colors.link
+    let link_color = config
+        .theme
+        .colors
+        .link
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(palette::light::ACCENT);
     visuals.hyperlink_color = link_color;
 
     // Selection - use custom color if provided
-    let selection_color = config.theme.colors.selection
+    let selection_color = config
+        .theme
+        .colors
+        .selection
         .as_ref()
         .map(|c| parse_hex_color(c))
         .unwrap_or(Color32::from_rgba_unmultiplied(45, 160, 158, 40));

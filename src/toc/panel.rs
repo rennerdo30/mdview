@@ -129,7 +129,7 @@ impl TocPanel {
                 ui.label(
                     egui::RichText::new("No headings")
                         .color(colors.text_disabled)
-                        .italics()
+                        .italics(),
                 );
             });
             return None;
@@ -160,14 +160,24 @@ impl TocPanel {
 
             // Expand/collapse all buttons
             let btn_color = colors.text_muted;
-            if ui.add(egui::Button::new(
-                egui::RichText::new("+").size(12.0).color(btn_color)
-            ).frame(false)).on_hover_text("Expand all").clicked() {
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new("+").size(12.0).color(btn_color))
+                        .frame(false),
+                )
+                .on_hover_text("Expand all")
+                .clicked()
+            {
                 self.expand_all();
             }
-            if ui.add(egui::Button::new(
-                egui::RichText::new("-").size(12.0).color(btn_color)
-            ).frame(false)).on_hover_text("Collapse all").clicked() {
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new("-").size(12.0).color(btn_color))
+                        .frame(false),
+                )
+                .on_hover_text("Collapse all")
+                .clicked()
+            {
                 self.collapse_all();
             }
             ui.add_space(4.0);
@@ -181,7 +191,9 @@ impl TocPanel {
             None // No filtering
         } else {
             // Rebuild cache only when search query changes
-            if self.cached_search_query != self.search_query || self.matching_indices_cache.is_none() {
+            if self.cached_search_query != self.search_query
+                || self.matching_indices_cache.is_none()
+            {
                 let query_lower = self.search_query.to_lowercase();
                 let mut matches = vec![false; toc.len()];
                 for entry in &toc.flat {
@@ -359,7 +371,8 @@ impl TocPanel {
             let indicator_rect = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, item_height));
             ui.painter()
                 .rect_filled(indicator_rect, Rounding::ZERO, colors.accent);
-            ui.painter().rect_filled(rect, Rounding::ZERO, colors.bg_hover);
+            ui.painter()
+                .rect_filled(rect, Rounding::ZERO, colors.bg_hover);
         } else if is_focused {
             ui.painter().rect_stroke(
                 rect.shrink(1.0),
@@ -377,8 +390,11 @@ impl TocPanel {
             let toggle_text = if collapsed { "\u{25B6}" } else { "\u{25BC}" };
             let toggle_pos = rect.min + Vec2::new(indent - 14.0, item_height / 2.0);
             let toggle_rect = egui::Rect::from_center_size(toggle_pos, Vec2::splat(16.0));
-            let toggle_response =
-                ui.interact(toggle_rect, ui.id().with(("toggle", entry.index)), egui::Sense::click());
+            let toggle_response = ui.interact(
+                toggle_rect,
+                ui.id().with(("toggle", entry.index)),
+                egui::Sense::click(),
+            );
 
             let toggle_color = if toggle_response.hovered() {
                 colors.text_primary
@@ -439,7 +455,12 @@ impl TocPanel {
     }
 
     /// Handle keyboard navigation, returns Some(index) if Enter was pressed on an entry
-    fn handle_keyboard_nav(&mut self, ui: &mut Ui, visible_indices: &[usize], _toc_len: usize) -> Option<usize> {
+    fn handle_keyboard_nav(
+        &mut self,
+        ui: &mut Ui,
+        visible_indices: &[usize],
+        _toc_len: usize,
+    ) -> Option<usize> {
         let mut result = None;
 
         ui.input(|i| {
@@ -559,22 +580,13 @@ impl TocPanel {
         // Draw background for current/hovered/focused state
         if is_current && !is_dimmed {
             // Active indicator line on the left
-            let indicator_rect = egui::Rect::from_min_size(
-                rect.min,
-                Vec2::new(3.0, item_height),
-            );
-            ui.painter().rect_filled(
-                indicator_rect,
-                Rounding::ZERO,
-                colors.accent,
-            );
+            let indicator_rect = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, item_height));
+            ui.painter()
+                .rect_filled(indicator_rect, Rounding::ZERO, colors.accent);
 
             // Subtle background
-            ui.painter().rect_filled(
-                rect,
-                Rounding::ZERO,
-                colors.bg_hover,
-            );
+            ui.painter()
+                .rect_filled(rect, Rounding::ZERO, colors.bg_hover);
         } else if is_focused {
             // Focus indicator - dotted border effect
             ui.painter().rect_stroke(
@@ -582,17 +594,11 @@ impl TocPanel {
                 Rounding::same(2.0),
                 egui::Stroke::new(1.0, colors.accent),
             );
-            ui.painter().rect_filled(
-                rect,
-                Rounding::ZERO,
-                colors.bg_elevated,
-            );
+            ui.painter()
+                .rect_filled(rect, Rounding::ZERO, colors.bg_elevated);
         } else if is_hovered {
-            ui.painter().rect_filled(
-                rect,
-                Rounding::ZERO,
-                colors.bg_elevated,
-            );
+            ui.painter()
+                .rect_filled(rect, Rounding::ZERO, colors.bg_elevated);
         }
 
         // Collapse toggle for entries with children (uses cached collapsed value)
@@ -602,7 +608,11 @@ impl TocPanel {
             let toggle_pos = rect.min + Vec2::new(indent - 14.0, item_height / 2.0);
             let toggle_rect = egui::Rect::from_center_size(toggle_pos, Vec2::splat(16.0));
 
-            let toggle_response = ui.interact(toggle_rect, ui.id().with(("toggle", entry.index)), egui::Sense::click());
+            let toggle_response = ui.interact(
+                toggle_rect,
+                ui.id().with(("toggle", entry.index)),
+                egui::Sense::click(),
+            );
 
             let toggle_color = if is_dimmed {
                 colors.text_disabled
@@ -670,7 +680,15 @@ impl TocPanel {
         // Render children if not collapsed (uses cached collapsed value)
         if has_children && !collapsed {
             for child in &entry.children {
-                if let Some(idx) = self.render_entry(ui, child, current_heading, focused_index, depth + 1, colors, matching_indices) {
+                if let Some(idx) = self.render_entry(
+                    ui,
+                    child,
+                    current_heading,
+                    focused_index,
+                    depth + 1,
+                    colors,
+                    matching_indices,
+                ) {
                     clicked = Some(idx);
                 }
             }
@@ -843,7 +861,10 @@ mod tests {
     fn test_truncate_text() {
         assert_eq!(truncate_text("short", 100.0, 14.0).as_ref(), "short");
         // Verify no allocation for short text
-        assert!(matches!(truncate_text("short", 100.0, 14.0), Cow::Borrowed(_)));
+        assert!(matches!(
+            truncate_text("short", 100.0, 14.0),
+            Cow::Borrowed(_)
+        ));
         // With font_size 14.0, char_width ~7.0, max_chars for 50.0 width is ~7 chars
         let result = truncate_text("this is a very long text", 50.0, 14.0);
         assert!(result.ends_with("..."));

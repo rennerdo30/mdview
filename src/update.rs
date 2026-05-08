@@ -14,7 +14,10 @@ const GITHUB_REPO: &str = "rennerdo30/mdview";
 
 /// GitHub API endpoint for latest release
 fn releases_url() -> String {
-    format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO)
+    format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    )
 }
 
 /// Response from GitHub releases API
@@ -165,9 +168,7 @@ fn is_newer_version(new: &str, current: &str) -> bool {
         v.split('.')
             .filter_map(|part| {
                 // Handle versions like "1.0.0-beta" by taking only the numeric part
-                part.split('-')
-                    .next()
-                    .and_then(|p| p.parse().ok())
+                part.split('-').next().and_then(|p| p.parse().ok())
             })
             .collect()
     };

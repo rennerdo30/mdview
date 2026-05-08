@@ -103,10 +103,8 @@ impl AnnotationPopup {
                             let is_selected = idx == self.selected_color;
 
                             let size = if is_selected { 20.0 } else { 16.0 };
-                            let (rect, response) = ui.allocate_exact_size(
-                                Vec2::splat(size),
-                                egui::Sense::click(),
-                            );
+                            let (rect, response) =
+                                ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
 
                             if response.clicked() {
                                 self.selected_color = idx;
@@ -189,10 +187,7 @@ pub fn render_margin_icons(
                 AnnotationKind::Bookmark => "🔖",
             };
 
-            let rect = Rect::from_min_size(
-                Pos2::new(5.0, y),
-                Vec2::new(20.0, 20.0),
-            );
+            let rect = Rect::from_min_size(Pos2::new(5.0, y), Vec2::new(20.0, 20.0));
 
             let response = ui.put(rect, egui::Label::new(icon).sense(egui::Sense::click()));
 
@@ -201,19 +196,17 @@ pub fn render_margin_icons(
             }
 
             // Tooltip
-            response.on_hover_ui(|ui| {
-                match annotation.kind {
-                    AnnotationKind::Highlight => {
-                        ui.label("Highlight");
+            response.on_hover_ui(|ui| match annotation.kind {
+                AnnotationKind::Highlight => {
+                    ui.label("Highlight");
+                }
+                AnnotationKind::Note => {
+                    if let Some(text) = &annotation.note_text {
+                        ui.label(text);
                     }
-                    AnnotationKind::Note => {
-                        if let Some(text) = &annotation.note_text {
-                            ui.label(text);
-                        }
-                    }
-                    AnnotationKind::Bookmark => {
-                        ui.label("Bookmark");
-                    }
+                }
+                AnnotationKind::Bookmark => {
+                    ui.label("Bookmark");
                 }
             });
         }

@@ -276,7 +276,8 @@ impl AnnotationStore {
     pub fn sorted_by_position(&self) -> Vec<&Annotation> {
         // Use cached sorted order if available (avoids re-sorting every call)
         if let Some(ref ids) = self.sorted_ids_cache {
-            return ids.iter()
+            return ids
+                .iter()
                 .filter_map(|id| self.annotations.get(id))
                 .collect();
         }
@@ -288,7 +289,9 @@ impl AnnotationStore {
     /// Ensure the sorted IDs cache is populated (call before immutable sorted access)
     pub fn ensure_sorted_cache(&mut self) {
         if self.sorted_ids_cache.is_none() {
-            let mut pairs: Vec<_> = self.annotations.iter()
+            let mut pairs: Vec<_> = self
+                .annotations
+                .iter()
                 .map(|(id, a)| (a.start, id.clone()))
                 .collect();
             pairs.sort_by_key(|(start, _)| *start);

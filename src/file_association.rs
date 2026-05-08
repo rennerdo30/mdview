@@ -5,9 +5,9 @@
 //! - Linux: Using xdg-mime
 //! - Windows: Using registry
 
-use std::process::Command;
 #[allow(unused_imports)]
 use log::{debug, warn};
+use std::process::Command;
 
 /// Result of attempting to register file association
 #[derive(Debug)]
@@ -82,9 +82,7 @@ fn get_executable_path() -> Option<String> {
 fn is_default_handler_macos() -> bool {
     // Use duti to check default handler
     // duti -x md returns the current default app for .md files
-    let output = Command::new("duti")
-        .args(["-x", "md"])
-        .output();
+    let output = Command::new("duti").args(["-x", "md"]).output();
 
     match output {
         Ok(out) => {
@@ -103,7 +101,9 @@ fn register_macos() -> AssociationResult {
 
     let exe_path = match get_executable_path() {
         Some(p) => p,
-        None => return AssociationResult::Failed("Could not determine executable path".to_string()),
+        None => {
+            return AssociationResult::Failed("Could not determine executable path".to_string())
+        }
     };
 
     // Try using duti first
@@ -134,11 +134,12 @@ fn register_macos() -> AssociationResult {
                         .output();
                     AssociationResult::Success
                 }
-                _ => AssociationResult::Failed(
-                    format!("To set mdview as default, right-click a .md file in Finder, \
+                _ => AssociationResult::Failed(format!(
+                    "To set mdview as default, right-click a .md file in Finder, \
                             select 'Get Info', change 'Open with' to mdview, \
-                            then click 'Change All'. Executable: {}", exe_path)
-                ),
+                            then click 'Change All'. Executable: {}",
+                    exe_path
+                )),
             }
         }
     }
@@ -168,7 +169,9 @@ fn is_default_handler_linux() -> bool {
 fn register_linux() -> AssociationResult {
     let exe_path = match get_executable_path() {
         Some(p) => p,
-        None => return AssociationResult::Failed("Could not determine executable path".to_string()),
+        None => {
+            return AssociationResult::Failed("Could not determine executable path".to_string())
+        }
     };
 
     // Create .desktop file
@@ -191,7 +194,10 @@ MimeType=text/markdown;text/x-markdown;text/mdx;
     let desktop_path = format!("{}/.local/share/applications/mdview.desktop", home);
 
     if let Err(e) = std::fs::create_dir_all(format!("{}/.local/share/applications", home)) {
-        return AssociationResult::Failed(format!("Failed to create applications directory: {}", e));
+        return AssociationResult::Failed(format!(
+            "Failed to create applications directory: {}",
+            e
+        ));
     }
 
     if let Err(e) = std::fs::write(&desktop_path, desktop_entry) {
@@ -273,14 +279,16 @@ fn is_default_handler_windows() -> bool {
 fn register_windows() -> AssociationResult {
     let exe_path = match get_executable_path() {
         Some(p) => p,
-        None => return AssociationResult::Failed("Could not determine executable path".to_string()),
+        None => {
+            return AssociationResult::Failed("Could not determine executable path".to_string())
+        }
     };
 
     // Validate exe path doesn't contain characters that could break out of quoting
     // in registry commands (prevents command injection via unusual install paths)
     if exe_path.contains('"') || exe_path.contains('\n') || exe_path.contains('\r') {
         return AssociationResult::Failed(
-            "Executable path contains invalid characters for registry commands".to_string()
+            "Executable path contains invalid characters for registry commands".to_string(),
         );
     }
 
@@ -296,21 +304,69 @@ fn register_windows() -> AssociationResult {
     // Register ProgId with shell open command
     let reg_commands: Vec<Vec<&str>> = vec![
         // Create ProgId for mdview
-        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md", "/ve", "/d", "Markdown Document", "/f"],
-        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\DefaultIcon", "/ve", "/d", &icon_command, "/f"],
-        vec!["reg", "add", r"HKCU\Software\Classes\mdview.md\shell\open\command", "/ve", "/d", &open_command, "/f"],
+        vec![
+            "reg",
+            "add",
+            r"HKCU\Software\Classes\mdview.md",
+            "/ve",
+            "/d",
+            "Markdown Document",
+            "/f",
+        ],
+        vec![
+            "reg",
+            "add",
+            r"HKCU\Software\Classes\mdview.md\DefaultIcon",
+            "/ve",
+            "/d",
+            &icon_command,
+            "/f",
+        ],
+        vec![
+            "reg",
+            "add",
+            r"HKCU\Software\Classes\mdview.md\shell\open\command",
+            "/ve",
+            "/d",
+            &open_command,
+            "/f",
+        ],
         // Register application capabilities
-        vec!["reg", "add", r"HKCU\Software\Classes\Applications\mdview.exe\shell\open\command", "/ve", "/d", &open_command, "/f"],
+        vec![
+            "reg",
+            "add",
+            r"HKCU\Software\Classes\Applications\mdview.exe\shell\open\command",
+            "/ve",
+            "/d",
+            &open_command,
+            "/f",
+        ],
         // Set OpenWithProgIds to show mdview in "Open with" menu
-        vec!["reg", "add", r"HKCU\Software\Classes\.md\OpenWithProgIds", "/v", "mdview.md", "/t", "REG_NONE", "/f"],
-        vec!["reg", "add", r"HKCU\Software\Classes\.markdown\OpenWithProgIds", "/v", "mdview.md", "/t", "REG_NONE", "/f"],
+        vec![
+            "reg",
+            "add",
+            r"HKCU\Software\Classes\.md\OpenWithProgIds",
+            "/v",
+            "mdview.md",
+            "/t",
+            "REG_NONE",
+            "/f",
+        ],
+        vec![
+            "reg",
+            "add",
+            r"HKCU\Software\Classes\.markdown\OpenWithProgIds",
+            "/v",
+            "mdview.md",
+            "/t",
+            "REG_NONE",
+            "/f",
+        ],
     ];
 
     let mut all_succeeded = true;
     for args in &reg_commands {
-        let result = Command::new(args[0])
-            .args(&args[1..])
-            .output();
+        let result = Command::new(args[0]).args(&args[1..]).output();
 
         match result {
             Ok(output) if output.status.success() => {
@@ -329,9 +385,7 @@ fn register_windows() -> AssociationResult {
     }
 
     // Notify shell of the change
-    let _ = Command::new("ie4uinit.exe")
-        .arg("-show")
-        .output();
+    let _ = Command::new("ie4uinit.exe").arg("-show").output();
 
     // Open Windows Settings to default apps page
     // Due to UserChoice hash protection in Win10/11, users must manually select the app

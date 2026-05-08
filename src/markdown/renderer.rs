@@ -3,17 +3,17 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use indexmap::IndexMap;
 
-use egui::{Color32, RichText, TextureHandle, Ui, Vec2};
-use pulldown_cmark::{Alignment, Event, Tag, TagEnd, CodeBlockKind};
+use egui::{epaint, Color32, Label, Pos2, RichText, Sense, Stroke, TextureHandle, Ui, Vec2};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, Tag, TagEnd};
 
-use crate::annotations::AnnotationStore;
 use crate::annotations::model::{Annotation, AnnotationKind};
+use crate::annotations::AnnotationStore;
 use crate::config::defaults::heading_size_multiplier;
 use crate::config::Config;
 
@@ -42,7 +42,9 @@ impl<'a> AnnotationIndex<'a> {
     /// this returns pre-sorted refs in O(n) instead of O(n log n).
     fn new(annotations: &'a AnnotationStore) -> Self {
         let sorted = annotations.sorted_by_position();
-        Self { sorted_annotations: sorted }
+        Self {
+            sorted_annotations: sorted,
+        }
     }
 
     /// Get annotations overlapping a range using binary search
@@ -54,8 +56,7 @@ impl<'a> AnnotationIndex<'a> {
 
         // Binary search to find first annotation that might overlap
         // An annotation overlaps [start, end) if ann.start < end AND ann.end > start
-        let first_idx = self.sorted_annotations
-            .partition_point(|a| a.end <= start);
+        let first_idx = self.sorted_annotations.partition_point(|a| a.end <= start);
 
         // Collect overlapping annotations — partition_point guarantees a.end > start
         // for all remaining entries, so we only need to check a.start < end.
@@ -153,6 +154,17 @@ fn floor_to_char_boundary(text: &str, index: usize) -> usize {
         clamped -= 1;
     }
     clamped
+}
+
+fn byte_offset_for_char_index(text: &str, char_index: usize) -> usize {
+    if char_index == 0 {
+        return 0;
+    }
+
+    text.char_indices()
+        .nth(char_index)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len())
 }
 
 /// Convert renderer control markers to plain text for contexts that do not render inline widgets
@@ -261,6 +273,23 @@ impl ContentBlock {
     }
 }
 
+/// Screen-space hit target for rendered text with optional galley geometry for wrapped labels.
+struct TextHitTarget {
+    rect: egui::Rect,
+    start: usize,
+    end: usize,
+    galley_pos: Option<Pos2>,
+    galley: Option<Arc<egui::Galley>>,
+}
+
+#[derive(Clone, Copy)]
+struct MixedContentStyle {
+    base_font_size: f32,
+    start_offset: usize,
+    code_text_color: Option<Color32>,
+    in_strikethrough: bool,
+}
+
 /// Pre-compute block boundaries from a pulldown-cmark event stream.
 /// This allows the renderer to skip entire blocks that are off-screen without
 /// processing any of their events through the state machine.
@@ -282,10 +311,21 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                 i += 1;
                 while i < events.len() {
                     match &events[i] {
-                        Event::End(TagEnd::Paragraph) => { i += 1; break; }
-                        Event::Text(t) => { text_len += t.len(); i += 1; }
-                        Event::Code(c) => { text_len += c.len(); i += 1; }
-                        _ => { i += 1; }
+                        Event::End(TagEnd::Paragraph) => {
+                            i += 1;
+                            break;
+                        }
+                        Event::Text(t) => {
+                            text_len += t.len();
+                            i += 1;
+                        }
+                        Event::Code(c) => {
+                            text_len += c.len();
+                            i += 1;
+                        }
+                        _ => {
+                            i += 1;
+                        }
                     }
                 }
                 let num_lines = (text_len as f32 / chars_per_line).ceil().max(1.0);
@@ -308,9 +348,17 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                 i += 1;
                 while i < events.len() {
                     match &events[i] {
-                        Event::End(TagEnd::Heading(_)) => { i += 1; break; }
-                        Event::Text(t) => { text_len += t.len(); i += 1; }
-                        _ => { i += 1; }
+                        Event::End(TagEnd::Heading(_)) => {
+                            i += 1;
+                            break;
+                        }
+                        Event::Text(t) => {
+                            text_len += t.len();
+                            i += 1;
+                        }
+                        _ => {
+                            i += 1;
+                        }
                     }
                 }
                 let height = ESTIMATED_LINE_HEIGHT * 2.0 + 24.0; // heading + spacing
@@ -330,9 +378,17 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                 i += 1;
                 while i < events.len() {
                     match &events[i] {
-                        Event::End(TagEnd::CodeBlock) => { i += 1; break; }
-                        Event::Text(t) => { text_len += t.len(); i += 1; }
-                        _ => { i += 1; }
+                        Event::End(TagEnd::CodeBlock) => {
+                            i += 1;
+                            break;
+                        }
+                        Event::Text(t) => {
+                            text_len += t.len();
+                            i += 1;
+                        }
+                        _ => {
+                            i += 1;
+                        }
                     }
                 }
                 let num_lines = events[start + 1..i]
@@ -361,9 +417,15 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                 i += 1;
                 while i < events.len() && depth > 0 {
                     match &events[i] {
-                        Event::Start(Tag::BlockQuote(_)) => { depth += 1; }
-                        Event::End(TagEnd::BlockQuote(_)) => { depth -= 1; }
-                        Event::Text(t) => { text_len += t.len(); }
+                        Event::Start(Tag::BlockQuote(_)) => {
+                            depth += 1;
+                        }
+                        Event::End(TagEnd::BlockQuote(_)) => {
+                            depth -= 1;
+                        }
+                        Event::Text(t) => {
+                            text_len += t.len();
+                        }
                         _ => {}
                     }
                     i += 1;
@@ -388,11 +450,21 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                 i += 1;
                 while i < events.len() && depth > 0 {
                     match &events[i] {
-                        Event::Start(Tag::List(_)) => { depth += 1; }
-                        Event::End(TagEnd::List(_)) => { depth -= 1; }
-                        Event::Start(Tag::Item) => { item_count += 1; }
-                        Event::Text(t) => { text_len += t.len(); }
-                        Event::Code(c) => { text_len += c.len(); }
+                        Event::Start(Tag::List(_)) => {
+                            depth += 1;
+                        }
+                        Event::End(TagEnd::List(_)) => {
+                            depth -= 1;
+                        }
+                        Event::Start(Tag::Item) => {
+                            item_count += 1;
+                        }
+                        Event::Text(t) => {
+                            text_len += t.len();
+                        }
+                        Event::Code(c) => {
+                            text_len += c.len();
+                        }
                         _ => {}
                     }
                     i += 1;
@@ -416,10 +488,18 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                 i += 1;
                 while i < events.len() && depth > 0 {
                     match &events[i] {
-                        Event::Start(Tag::Table(_)) => { depth += 1; }
-                        Event::End(TagEnd::Table) => { depth -= 1; }
-                        Event::Start(Tag::TableRow) | Event::Start(Tag::TableHead) => { row_count += 1; }
-                        Event::Text(t) => { text_len += t.len(); }
+                        Event::Start(Tag::Table(_)) => {
+                            depth += 1;
+                        }
+                        Event::End(TagEnd::Table) => {
+                            depth -= 1;
+                        }
+                        Event::Start(Tag::TableRow) | Event::Start(Tag::TableHead) => {
+                            row_count += 1;
+                        }
+                        Event::Text(t) => {
+                            text_len += t.len();
+                        }
                         _ => {}
                     }
                     i += 1;
@@ -442,9 +522,17 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                 i += 1;
                 while i < events.len() {
                     match &events[i] {
-                        Event::End(TagEnd::FootnoteDefinition) => { i += 1; break; }
-                        Event::Text(t) => { text_len += t.len(); i += 1; }
-                        _ => { i += 1; }
+                        Event::End(TagEnd::FootnoteDefinition) => {
+                            i += 1;
+                            break;
+                        }
+                        Event::Text(t) => {
+                            text_len += t.len();
+                            i += 1;
+                        }
+                        _ => {
+                            i += 1;
+                        }
                     }
                 }
                 blocks.push(ContentBlock {
@@ -616,9 +704,9 @@ pub struct MarkdownRenderer {
     /// Tracks estimated cumulative height as blocks are skipped/rendered
     block_y_offset: f32,
 
-    /// Screen-space hit boxes for rendered text runs (start/end byte offsets).
-    /// Rebuilt every frame and used for approximate pointer-to-text selection mapping.
-    text_hit_boxes: Vec<(egui::Rect, usize, usize)>,
+    /// Screen-space hit targets for rendered text runs (start/end byte offsets).
+    /// Rebuilt every frame and used for pointer-to-text selection mapping.
+    text_hit_boxes: Vec<TextHitTarget>,
 }
 
 impl MarkdownRenderer {
@@ -738,11 +826,8 @@ impl MarkdownRenderer {
                         let size = [rgba.width() as usize, rgba.height() as usize];
                         let pixels = rgba.into_raw();
                         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                        let texture = ctx.load_texture(
-                            &cache_key,
-                            color_image,
-                            egui::TextureOptions::LINEAR,
-                        );
+                        let texture =
+                            ctx.load_texture(&cache_key, color_image, egui::TextureOptions::LINEAR);
                         self.cache_image(cache_key.clone(), texture);
                         log::debug!("Async image load completed: {}", cache_key);
                     } else {
@@ -776,7 +861,7 @@ impl MarkdownRenderer {
     ) -> Option<Arc<egui::text::LayoutJob>> {
         // Generate cache key from code hash + language + theme + dark mode + line numbers
         let cache_key = {
-            use sha2::{Sha256, Digest};
+            use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(code.as_bytes());
             hasher.update(language.unwrap_or("").as_bytes());
@@ -796,7 +881,13 @@ impl MarkdownRenderer {
         }
 
         // Cache miss - compute syntax highlighting
-        let job = Arc::new(highlight_code(code, language, theme_name, is_dark, show_line_numbers)?);
+        let job = Arc::new(highlight_code(
+            code,
+            language,
+            theme_name,
+            is_dark,
+            show_line_numbers,
+        )?);
 
         // Cache with LRU eviction (O(1) operations)
         while self.syntax_cache.len() >= SYNTAX_CACHE_MAX_SIZE {
@@ -816,17 +907,27 @@ impl MarkdownRenderer {
 
     /// Map a pointer position to an approximate document byte offset.
     pub fn hit_test_char_offset(&self, pos: egui::Pos2) -> Option<usize> {
-        for (rect, start, end) in self.text_hit_boxes.iter().rev() {
-            if rect.contains(pos) {
-                let span = end.saturating_sub(*start);
-                if span == 0 {
-                    return Some(*start);
+        for target in self.text_hit_boxes.iter().rev() {
+            if target.rect.contains(pos) {
+                if let (Some(galley_pos), Some(galley)) =
+                    (target.galley_pos, target.galley.as_ref())
+                {
+                    let local = pos - galley_pos;
+                    let cursor = galley.cursor_from_pos(local);
+                    let byte_offset =
+                        byte_offset_for_char_index(galley.text(), cursor.ccursor.index);
+                    return Some((target.start + byte_offset).min(target.end));
                 }
-                let width = rect.width().max(1.0);
-                let x = (pos.x - rect.left()).clamp(0.0, width);
+
+                let span = target.end.saturating_sub(target.start);
+                if span == 0 {
+                    return Some(target.start);
+                }
+                let width = target.rect.width().max(1.0);
+                let x = (pos.x - target.rect.left()).clamp(0.0, width);
                 let ratio = x / width;
-                let offset = *start + (ratio * span as f32).floor() as usize;
-                return Some(offset.min(*end));
+                let offset = target.start + (ratio * span as f32).floor() as usize;
+                return Some(offset.min(target.end));
             }
         }
         None
@@ -848,7 +949,7 @@ impl MarkdownRenderer {
     fn get_mermaid_metadata(&mut self, code: &str, diagram_type: &str) -> &MermaidMetadata {
         // Generate cache key from code hash
         let cache_key = {
-            use sha2::{Sha256, Digest};
+            use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(code.as_bytes());
             hex::encode(&hasher.finalize()[..8])
@@ -859,7 +960,9 @@ impl MarkdownRenderer {
             && !self.mermaid_metadata_cache.contains_key(&cache_key)
         {
             // Remove ~25% of entries to amortize eviction cost
-            let to_remove: Vec<String> = self.mermaid_metadata_cache.keys()
+            let to_remove: Vec<String> = self
+                .mermaid_metadata_cache
+                .keys()
                 .take(MERMAID_METADATA_CACHE_MAX_SIZE / 4)
                 .cloned()
                 .collect();
@@ -870,17 +973,20 @@ impl MarkdownRenderer {
 
         // Use entry API to avoid clone - returns reference to cached or newly inserted value
         // Only allocate owned strings inside the cache-miss closure
-        self.mermaid_metadata_cache.entry(cache_key).or_insert_with(|| {
-            Self::compute_mermaid_metadata(code, diagram_type)
-        })
+        self.mermaid_metadata_cache
+            .entry(cache_key)
+            .or_insert_with(|| Self::compute_mermaid_metadata(code, diagram_type))
     }
 
     /// Compute mermaid metadata for a diagram (helper for caching)
     fn compute_mermaid_metadata(code: &str, diagram_type: &str) -> MermaidMetadata {
         match diagram_type {
             "flowchart" | "graph" => {
-                let nodes: Vec<String> = code.lines()
-                    .filter(|l| !l.trim().starts_with("graph") && !l.trim().starts_with("flowchart"))
+                let nodes: Vec<String> = code
+                    .lines()
+                    .filter(|l| {
+                        !l.trim().starts_with("graph") && !l.trim().starts_with("flowchart")
+                    })
                     .filter(|l| !l.trim().is_empty())
                     .take(6)
                     .map(extract_node_text)
@@ -896,7 +1002,8 @@ impl MarkdownRenderer {
                 // Single-pass counting of participants and arrows
                 let (participant_count, arrow_count) = code.lines().fold((0, 0), |(p, a), l| {
                     let trimmed = l.trim();
-                    let is_participant = trimmed.starts_with("participant") || trimmed.starts_with("actor");
+                    let is_participant =
+                        trimmed.starts_with("participant") || trimmed.starts_with("actor");
                     let is_arrow = l.contains("->>") || l.contains("-->>") || l.contains("->");
                     (p + is_participant as usize, a + is_arrow as usize)
                 });
@@ -908,7 +1015,8 @@ impl MarkdownRenderer {
                 }
             }
             "class" => {
-                let class_count = code.lines()
+                let class_count = code
+                    .lines()
                     .filter(|l| l.trim().starts_with("class "))
                     .count();
                 MermaidMetadata {
@@ -919,7 +1027,8 @@ impl MarkdownRenderer {
                 }
             }
             "state" => {
-                let state_count = code.lines()
+                let state_count = code
+                    .lines()
                     .filter(|l| {
                         let t = l.trim();
                         t.starts_with("state ") || t.contains(" --> ")
@@ -933,9 +1042,7 @@ impl MarkdownRenderer {
                 }
             }
             "gantt" => {
-                let task_count = code.lines()
-                    .filter(|l| l.contains(':'))
-                    .count();
+                let task_count = code.lines().filter(|l| l.contains(':')).count();
                 MermaidMetadata {
                     diagram_type: diagram_type.to_string(),
                     count1: task_count,
@@ -944,9 +1051,7 @@ impl MarkdownRenderer {
                 }
             }
             "pie" => {
-                let slice_count = code.lines()
-                    .filter(|l| l.trim().starts_with('"'))
-                    .count();
+                let slice_count = code.lines().filter(|l| l.trim().starts_with('"')).count();
                 MermaidMetadata {
                     diagram_type: diagram_type.to_string(),
                     count1: slice_count,
@@ -955,7 +1060,8 @@ impl MarkdownRenderer {
                 }
             }
             "er" | "erDiagram" => {
-                let entity_count = code.lines()
+                let entity_count = code
+                    .lines()
                     .filter(|l| l.contains('{') || l.contains("||"))
                     .count();
                 MermaidMetadata {
@@ -966,7 +1072,8 @@ impl MarkdownRenderer {
                 }
             }
             "journey" => {
-                let section_count = code.lines()
+                let section_count = code
+                    .lines()
                     .filter(|l| l.trim().starts_with("section"))
                     .count();
                 MermaidMetadata {
@@ -992,7 +1099,8 @@ impl MarkdownRenderer {
                 }
             }
             "mindmap" => {
-                let node_count = code.lines()
+                let node_count = code
+                    .lines()
                     .filter(|l| !l.trim().is_empty() && !l.trim().starts_with("mindmap"))
                     .count();
                 MermaidMetadata {
@@ -1003,9 +1111,7 @@ impl MarkdownRenderer {
                 }
             }
             "timeline" => {
-                let event_count = code.lines()
-                    .filter(|l| l.contains(':'))
-                    .count();
+                let event_count = code.lines().filter(|l| l.contains(':')).count();
                 MermaidMetadata {
                     diagram_type: diagram_type.to_string(),
                     count1: event_count,
@@ -1014,8 +1120,11 @@ impl MarkdownRenderer {
                 }
             }
             "requirementDiagram" => {
-                let req_count = code.lines()
-                    .filter(|l| l.trim().starts_with("requirement") || l.trim().starts_with("element"))
+                let req_count = code
+                    .lines()
+                    .filter(|l| {
+                        l.trim().starts_with("requirement") || l.trim().starts_with("element")
+                    })
                     .count();
                 MermaidMetadata {
                     diagram_type: diagram_type.to_string(),
@@ -1055,11 +1164,8 @@ impl MarkdownRenderer {
                         let size = [rgba.width() as usize, rgba.height() as usize];
                         let pixels = rgba.into_raw();
                         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                        let texture = ctx.load_texture(
-                            &cache_key,
-                            color_image,
-                            egui::TextureOptions::LINEAR,
-                        );
+                        let texture =
+                            ctx.load_texture(&cache_key, color_image, egui::TextureOptions::LINEAR);
                         self.cache_image(cache_key.clone(), texture);
                         log::debug!("Async mermaid render completed: {}", cache_key);
                     } else {
@@ -1122,7 +1228,9 @@ impl MarkdownRenderer {
             Some(AnnotationIndex::new(annotations))
         };
         // Empty index for passing to methods that require a reference
-        let empty_index = AnnotationIndex { sorted_annotations: Vec::new() };
+        let empty_index = AnnotationIndex {
+            sorted_annotations: Vec::new(),
+        };
         let ann_index_ref = annotation_index.as_ref().unwrap_or(&empty_index);
 
         let base_font_size = config.theme.fonts.size;
@@ -1155,14 +1263,18 @@ impl MarkdownRenderer {
 
         // Use block-level culling: skip entire blocks that are off-screen
         let visible_rect = self.visible_rect;
-        let buffer = visible_rect.map(|r| r.height() * 2.0).unwrap_or(DEFAULT_VIEWPORT_BUFFER);
+        let buffer = visible_rect
+            .map(|r| r.height() * 2.0)
+            .unwrap_or(DEFAULT_VIEWPORT_BUFFER);
         let viewport_top = visible_rect.map(|r| r.top()).unwrap_or(0.0);
         let viewport_bottom = visible_rect.map(|r| r.bottom()).unwrap_or(f32::MAX);
 
         // When a scroll target is active, find the block containing that heading
         // so we can force-render it even if it appears off-screen
         let scroll_target_block_idx = self.scroll_target.and_then(|target_heading| {
-            block_map.iter().position(|b| b.heading_index == Some(target_heading))
+            block_map
+                .iter()
+                .position(|b| b.heading_index == Some(target_heading))
         });
 
         for (block_idx, block) in block_map.iter_mut().enumerate() {
@@ -1189,7 +1301,10 @@ impl MarkdownRenderer {
             let is_scroll_target_block = scroll_target_block_idx == Some(block_idx);
             let must_process = block.is_heading
                 || is_scroll_target_block
-                || matches!(events.get(block.event_start), Some(Event::Start(Tag::FootnoteDefinition(_))));
+                || matches!(
+                    events.get(block.event_start),
+                    Some(Event::Start(Tag::FootnoteDefinition(_)))
+                );
 
             if !must_process && (is_above_viewport || is_below_viewport) {
                 // Skip this entire block - allocate space and advance char_offset
@@ -1218,7 +1333,9 @@ impl MarkdownRenderer {
                         self.in_footnote_definition = false;
                     }
                     Event::Start(tag) => self.handle_start_tag(tag, ui, heading_positions),
-                    Event::End(tag) => self.handle_end_tag(tag, ui, base_font_size, spacing, config, ann_index_ref),
+                    Event::End(tag) => {
+                        self.handle_end_tag(tag, ui, base_font_size, spacing, config, ann_index_ref)
+                    }
                     Event::Text(text) => self.handle_text(text),
                     Event::Code(code) => self.handle_inline_code(code),
                     Event::SoftBreak => self.text_buffer.push(' '),
@@ -1228,12 +1345,16 @@ impl MarkdownRenderer {
                     Event::FootnoteReference(name) => {
                         let num = {
                             let next_num = self.footnote_counter.len() + 1;
-                            *self.footnote_counter.entry(name.to_string()).or_insert(next_num)
+                            *self
+                                .footnote_counter
+                                .entry(name.to_string())
+                                .or_insert(next_num)
                         };
                         if self.current_link.is_some() {
                             self.text_buffer.push_str(&format!("[{}]", num));
                         } else {
-                            self.text_buffer.push_str(&format!("\x01FN:{}:{}\x01", name, num));
+                            self.text_buffer
+                                .push_str(&format!("\x01FN:{}:{}\x01", name, num));
                         }
                     }
                     _ => {}
@@ -1320,9 +1441,7 @@ impl MarkdownRenderer {
             Tag::CodeBlock(kind) => {
                 self.in_code_block = true;
                 self.code_language = match kind {
-                    CodeBlockKind::Fenced(lang) if !lang.is_empty() => {
-                        Some(lang.to_string())
-                    }
+                    CodeBlockKind::Fenced(lang) if !lang.is_empty() => Some(lang.to_string()),
                     _ => None,
                 };
             }
@@ -1346,7 +1465,9 @@ impl MarkdownRenderer {
                 self.text_buffer.push_str(dest_url);
                 self.text_buffer.push(LINK_MARKER);
             }
-            Tag::Image { dest_url, title, .. } => {
+            Tag::Image {
+                dest_url, title, ..
+            } => {
                 // Handle image rendering
                 self.render_image(ui, dest_url, title);
             }
@@ -1377,7 +1498,12 @@ impl MarkdownRenderer {
         match tag {
             TagEnd::Heading(_level) => {
                 // Apply heading color from config if specified
-                let heading_color = config.theme.colors.heading.as_ref().map(|c| parse_config_hex_color(c));
+                let heading_color = config
+                    .theme
+                    .colors
+                    .heading
+                    .as_ref()
+                    .map(|c| parse_config_hex_color(c));
                 self.render_heading_with_config(ui, base_font_size, spacing, heading_color);
                 self.heading_level = 0;
             }
@@ -1386,8 +1512,19 @@ impl MarkdownRenderer {
                     self.render_blockquote(ui, base_font_size);
                 } else {
                     // Apply code_text color from config if specified
-                    let code_text_color = config.theme.colors.code_text.as_ref().map(|c| parse_config_hex_color(c));
-                    self.render_paragraph(ui, base_font_size, spacing, annotation_index, code_text_color);
+                    let code_text_color = config
+                        .theme
+                        .colors
+                        .code_text
+                        .as_ref()
+                        .map(|c| parse_config_hex_color(c));
+                    self.render_paragraph(
+                        ui,
+                        base_font_size,
+                        spacing,
+                        annotation_index,
+                        code_text_color,
+                    );
                 }
                 self.paragraph_start_offset = None;
             }
@@ -1504,14 +1641,11 @@ impl MarkdownRenderer {
         let size_multiplier = heading_size_multiplier(level);
         let font_size = base_font_size * size_multiplier;
 
-        let mut rich_text = RichText::new(&text)
-            .size(font_size)
-            .strong();
+        let mut rich_text = RichText::new(&text).size(font_size).strong();
 
         // H5 and H6 use lighter weight to further differentiate from larger headings
         if level >= 5 {
-            rich_text = RichText::new(&text)
-                .size(font_size);
+            rich_text = RichText::new(&text).size(font_size);
             // H6 uses muted/secondary text appearance
             if level >= 6 {
                 let is_dark = ui.visuals().dark_mode;
@@ -1531,8 +1665,14 @@ impl MarkdownRenderer {
 
         let heading_start = self.char_offset.saturating_sub(text.len());
         let heading_end = self.char_offset;
-        let response = ui.label(rich_text);
-        self.record_text_hit(response.rect, heading_start, heading_end);
+        self.add_label_with_hit(
+            ui,
+            egui::Label::new(rich_text).wrap_mode(egui::TextWrapMode::Wrap),
+            heading_start,
+            heading_end,
+            ui.style().visuals.text_color(),
+            Stroke::NONE,
+        );
 
         ui.add_space(bottom_space);
     }
@@ -1573,26 +1713,64 @@ impl MarkdownRenderer {
             } else {
                 Color32::from_rgb(70, 110, 150)
             };
-            ui.label(
-                RichText::new(marker)
-                    .small()
-                    .italics()
-                    .color(marker_color),
-            );
+            ui.label(RichText::new(marker).small().italics().color(marker_color));
             ui.add_space(2.0);
         }
 
         // Parse and render mixed content (text + inline code) with annotations
         // Annotations are already sorted from the index, no need to re-sort
-        self.render_mixed_content_with_annotations(ui, &text, base_font_size, start_offset, &overlapping, code_text_color, self.in_strikethrough);
+        self.render_mixed_content_with_annotations(
+            ui,
+            &text,
+            MixedContentStyle {
+                base_font_size,
+                start_offset,
+                code_text_color,
+                in_strikethrough: self.in_strikethrough,
+            },
+            &overlapping,
+        );
 
         ui.add_space(spacing.paragraph);
     }
 
-    fn record_text_hit(&mut self, rect: egui::Rect, start: usize, end: usize) {
+    fn record_text_hit_with_galley(
+        &mut self,
+        rect: egui::Rect,
+        start: usize,
+        end: usize,
+        galley_pos: Option<Pos2>,
+        galley: Option<Arc<egui::Galley>>,
+    ) {
         if end > start {
-            self.text_hit_boxes.push((rect, start, end));
+            self.text_hit_boxes.push(TextHitTarget {
+                rect,
+                start,
+                end,
+                galley_pos,
+                galley,
+            });
         }
+    }
+
+    fn add_label_with_hit(
+        &mut self,
+        ui: &mut Ui,
+        label: Label,
+        start: usize,
+        end: usize,
+        fallback_color: Color32,
+        underline: Stroke,
+    ) -> egui::Response {
+        let (galley_pos, galley, response) = label.layout_in_ui(ui);
+        if ui.is_rect_visible(response.rect) {
+            ui.painter().add(
+                epaint::TextShape::new(galley_pos, galley.clone(), fallback_color)
+                    .with_underline(underline),
+            );
+        }
+        self.record_text_hit_with_galley(response.rect, start, end, Some(galley_pos), Some(galley));
+        response
     }
 
     fn render_annotated_text_run(
@@ -1659,8 +1837,14 @@ impl MarkdownRenderer {
             if in_strikethrough {
                 rich = rich.strikethrough();
             }
-            let response = ui.label(rich);
-            self.record_text_hit(response.rect, run_start, run_end);
+            self.add_label_with_hit(
+                ui,
+                egui::Label::new(rich).wrap_mode(egui::TextWrapMode::Wrap),
+                run_start,
+                run_end,
+                ui.style().visuals.text_color(),
+                Stroke::NONE,
+            );
         }
     }
 
@@ -1668,21 +1852,25 @@ impl MarkdownRenderer {
         &mut self,
         ui: &mut Ui,
         text: &str,
-        base_font_size: f32,
-        start_offset: usize,
+        style: MixedContentStyle,
         annotations: &[&Annotation],
-        code_text_color: Option<Color32>,
-        in_strikethrough: bool,
     ) {
         // Fast path: no annotations and no inline code or footnotes - use single label
         let has_special_markers = text.contains(INLINE_CODE_MARKER)
             || text.contains(FOOTNOTE_MARKER)
             || text.contains(LINK_MARKER)
             || text.contains(LINK_END_MARKER);
-        if annotations.is_empty() && !has_special_markers && !in_strikethrough {
+        if annotations.is_empty() && !has_special_markers && !style.in_strikethrough {
             ui.horizontal_wrapped(|ui| {
-                let response = ui.label(RichText::new(text).size(base_font_size));
-                self.record_text_hit(response.rect, start_offset, start_offset + text.len());
+                self.add_label_with_hit(
+                    ui,
+                    egui::Label::new(RichText::new(text).size(style.base_font_size))
+                        .wrap_mode(egui::TextWrapMode::Wrap),
+                    style.start_offset,
+                    style.start_offset + text.len(),
+                    ui.style().visuals.text_color(),
+                    Stroke::NONE,
+                );
             });
             return;
         }
@@ -1694,28 +1882,42 @@ impl MarkdownRenderer {
             && !text.contains(LINK_END_MARKER)
         {
             ui.horizontal_wrapped(|ui| {
-                let mut current_offset = start_offset;
+                let mut current_offset = style.start_offset;
                 for part in text.split(INLINE_CODE_MARKER) {
                     if let Some(code) = part.strip_prefix("CODE:") {
-                        let text_color = code_text_color.unwrap_or(Color32::from_rgb(206, 145, 120));
+                        let text_color = style
+                            .code_text_color
+                            .unwrap_or(Color32::from_rgb(206, 145, 120));
                         let mut code_text = RichText::new(code)
-                            .size(base_font_size * 0.9)
+                            .size(style.base_font_size * 0.9)
                             .monospace()
                             .color(text_color)
                             .background_color(Color32::from_gray(50));
-                        if in_strikethrough {
+                        if style.in_strikethrough {
                             code_text = code_text.strikethrough();
                         }
-                        let response = ui.label(code_text);
-                        self.record_text_hit(response.rect, current_offset, current_offset + code.len());
+                        self.add_label_with_hit(
+                            ui,
+                            egui::Label::new(code_text).wrap_mode(egui::TextWrapMode::Wrap),
+                            current_offset,
+                            current_offset + code.len(),
+                            text_color,
+                            Stroke::NONE,
+                        );
                         current_offset += code.len();
                     } else if !part.is_empty() {
-                        let mut rich = RichText::new(part).size(base_font_size);
-                        if in_strikethrough {
+                        let mut rich = RichText::new(part).size(style.base_font_size);
+                        if style.in_strikethrough {
                             rich = rich.strikethrough();
                         }
-                        let response = ui.label(rich);
-                        self.record_text_hit(response.rect, current_offset, current_offset + part.len());
+                        self.add_label_with_hit(
+                            ui,
+                            egui::Label::new(rich).wrap_mode(egui::TextWrapMode::Wrap),
+                            current_offset,
+                            current_offset + part.len(),
+                            ui.style().visuals.text_color(),
+                            Stroke::NONE,
+                        );
                         current_offset += part.len();
                     }
                 }
@@ -1724,24 +1926,32 @@ impl MarkdownRenderer {
         }
 
         ui.horizontal_wrapped(|ui| {
-            let mut current_offset = start_offset;
+            let mut current_offset = style.start_offset;
             let is_dark = ui.visuals().dark_mode;
 
             // Split on inline code markers - use iterator directly (no allocation)
             for part in text.split(INLINE_CODE_MARKER) {
                 if let Some(code) = part.strip_prefix("CODE:") {
                     // Apply code_text color from config if specified, otherwise use default
-                    let text_color = code_text_color.unwrap_or(Color32::from_rgb(206, 145, 120));
+                    let text_color = style
+                        .code_text_color
+                        .unwrap_or(Color32::from_rgb(206, 145, 120));
                     let mut code_text = RichText::new(code)
-                        .size(base_font_size * 0.9)
+                        .size(style.base_font_size * 0.9)
                         .monospace()
                         .color(text_color)
                         .background_color(Color32::from_gray(50));
-                    if in_strikethrough {
+                    if style.in_strikethrough {
                         code_text = code_text.strikethrough();
                     }
-                    let response = ui.label(code_text);
-                    self.record_text_hit(response.rect, current_offset, current_offset + code.len());
+                    self.add_label_with_hit(
+                        ui,
+                        egui::Label::new(code_text).wrap_mode(egui::TextWrapMode::Wrap),
+                        current_offset,
+                        current_offset + code.len(),
+                        text_color,
+                        Stroke::NONE,
+                    );
                     current_offset += code.len();
                 } else if !part.is_empty() {
                     // Handle footnote references within the text - use iterator directly
@@ -1751,7 +1961,7 @@ impl MarkdownRenderer {
                             if let Some((_name, num_str)) = fn_ref.split_once(':') {
                                 // Render as superscript number
                                 let superscript = RichText::new(format!("[{}]", num_str))
-                                    .size(base_font_size * 0.75)
+                                    .size(style.base_font_size * 0.75)
                                     .color(Color32::from_rgb(78, 201, 176))
                                     .raised();
                                 ui.label(superscript);
@@ -1765,10 +1975,10 @@ impl MarkdownRenderer {
                                         self.render_annotated_text_run(
                                             ui,
                                             before_link,
-                                            base_font_size,
+                                            style.base_font_size,
                                             current_offset,
                                             annotations,
-                                            in_strikethrough,
+                                            style.in_strikethrough,
                                         );
                                         current_offset += before_link.len();
                                     }
@@ -1779,27 +1989,38 @@ impl MarkdownRenderer {
                                         let url = &after_link_start[..url_end_idx];
                                         let after_url = &after_link_start
                                             [url_end_idx + LINK_MARKER.len_utf8()..];
-                                        if let Some(link_end_idx) = after_url.find(LINK_END_MARKER) {
+                                        if let Some(link_end_idx) = after_url.find(LINK_END_MARKER)
+                                        {
                                             let link_text = &after_url[..link_end_idx];
                                             if !link_text.is_empty() {
                                                 let mut link_rich = RichText::new(link_text)
-                                                    .size(base_font_size)
+                                                    .size(style.base_font_size)
                                                     .color(theme_colors::link_color(is_dark))
                                                     .underline();
-                                                if let Some(bg) =
-                                                    annotation_highlight_color(annotations, current_offset)
-                                                {
+                                                if let Some(bg) = annotation_highlight_color(
+                                                    annotations,
+                                                    current_offset,
+                                                ) {
                                                     link_rich = link_rich.background_color(bg);
                                                 }
-                                                if in_strikethrough {
+                                                if style.in_strikethrough {
                                                     link_rich = link_rich.strikethrough();
                                                 }
-                                                let response = ui.link(link_rich);
-                                                self.record_text_hit(
-                                                    response.rect,
+                                                let response = self.add_label_with_hit(
+                                                    ui,
+                                                    egui::Label::new(link_rich)
+                                                        .wrap_mode(egui::TextWrapMode::Wrap)
+                                                        .sense(Sense::click()),
                                                     current_offset,
                                                     current_offset + link_text.len(),
+                                                    theme_colors::link_color(is_dark),
+                                                    Stroke::NONE,
                                                 );
+                                                if response.hovered() {
+                                                    ui.ctx().set_cursor_icon(
+                                                        egui::CursorIcon::PointingHand,
+                                                    );
+                                                }
                                                 if response.clicked() {
                                                     if let Err(e) = open::that(url) {
                                                         log::error!("Failed to open link: {}", e);
@@ -1808,8 +2029,8 @@ impl MarkdownRenderer {
                                                 current_offset += link_text.len();
                                             }
 
-                                            remaining =
-                                                &after_url[link_end_idx + LINK_END_MARKER.len_utf8()..];
+                                            remaining = &after_url
+                                                [link_end_idx + LINK_END_MARKER.len_utf8()..];
                                             continue;
                                         }
                                     }
@@ -1819,10 +2040,10 @@ impl MarkdownRenderer {
                                     self.render_annotated_text_run(
                                         ui,
                                         &fallback,
-                                        base_font_size,
+                                        style.base_font_size,
                                         current_offset,
                                         annotations,
-                                        in_strikethrough,
+                                        style.in_strikethrough,
                                     );
                                     current_offset += fallback.len();
                                     break;
@@ -1831,10 +2052,10 @@ impl MarkdownRenderer {
                                 self.render_annotated_text_run(
                                     ui,
                                     remaining,
-                                    base_font_size,
+                                    style.base_font_size,
                                     current_offset,
                                     annotations,
-                                    in_strikethrough,
+                                    style.in_strikethrough,
                                 );
                                 current_offset += remaining.len();
                                 break;
@@ -1852,27 +2073,50 @@ impl MarkdownRenderer {
             return;
         }
 
-        ui.horizontal(|ui| {
-            // Vertical bar for blockquote
-            let rect = ui.available_rect_before_wrap();
-            let bar_rect = egui::Rect::from_min_size(
-                rect.min,
-                Vec2::new(3.0, ui.spacing().interact_size.y),
-            );
-            ui.painter().rect_filled(bar_rect, 0.0, Color32::from_gray(100));
+        let bar_width = 3.0;
+        let bar_spacing = 12.0;
+        let indent = bar_width + bar_spacing;
 
-            ui.add_space(12.0);
+        // Render text in an indented sub-region so it wraps within the available width
+        let outer_rect = ui.available_rect_before_wrap();
+        let text_width = (outer_rect.width() - indent).max(1.0);
 
-            let quote_text = RichText::new(&text)
-                .size(base_font_size)
-                .italics()
-                .color(Color32::from_gray(180));
+        let response = ui.allocate_ui_with_layout(
+            Vec2::new(outer_rect.width(), 0.0),
+            egui::Layout::left_to_right(egui::Align::Min),
+            |ui| {
+                ui.add_space(indent);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(text_width, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        let quote_text = RichText::new(&text)
+                            .size(base_font_size)
+                            .italics()
+                            .color(Color32::from_gray(180));
 
-            let quote_start = self.char_offset.saturating_sub(text.len());
-            let quote_end = self.char_offset;
-            let response = ui.label(quote_text);
-            self.record_text_hit(response.rect, quote_start, quote_end);
-        });
+                        let quote_start = self.char_offset.saturating_sub(text.len());
+                        let quote_end = self.char_offset;
+                        self.add_label_with_hit(
+                            ui,
+                            egui::Label::new(quote_text).wrap_mode(egui::TextWrapMode::Wrap),
+                            quote_start,
+                            quote_end,
+                            Color32::from_gray(180),
+                            Stroke::NONE,
+                        );
+                    },
+                );
+            },
+        );
+
+        // Paint the vertical bar to match the actual rendered height
+        let bar_rect = egui::Rect::from_min_size(
+            outer_rect.min,
+            Vec2::new(bar_width, response.response.rect.height()),
+        );
+        ui.painter()
+            .rect_filled(bar_rect, 0.0, Color32::from_gray(100));
 
         ui.add_space(8.0);
     }
@@ -1884,7 +2128,9 @@ impl MarkdownRenderer {
         }
 
         // Check if this is a Mermaid diagram
-        let is_mermaid = self.code_language.as_deref()
+        let is_mermaid = self
+            .code_language
+            .as_deref()
             .map(|l| l.to_lowercase() == "mermaid")
             .unwrap_or(false);
 
@@ -1909,11 +2155,17 @@ impl MarkdownRenderer {
         // Try syntax highlighting with caching - only if visible or already cached
         #[cfg(feature = "syntax-highlighting")]
         let highlighted_job = if config.markdown.syntax_highlighting && is_visible {
-            self.get_highlighted_code(&code, lang_label.as_deref(), &config.markdown.syntax_theme, is_dark, show_line_numbers)
+            self.get_highlighted_code(
+                &code,
+                lang_label.as_deref(),
+                &config.markdown.syntax_theme,
+                is_dark,
+                show_line_numbers,
+            )
         } else if config.markdown.syntax_highlighting {
             // Check cache without computing - if already cached, use it
             let cache_key = {
-                use sha2::{Sha256, Digest};
+                use sha2::{Digest, Sha256};
                 let mut hasher = Sha256::new();
                 hasher.update(code.as_bytes());
                 hasher.update(lang_label.as_deref().unwrap_or("").as_bytes());
@@ -1959,11 +2211,17 @@ impl MarkdownRenderer {
                 if !rendered {
                     if show_line_numbers {
                         let line_count = code.lines().count();
-                        let digits = if line_count == 0 { 1 } else { (line_count as f32).log10().floor() as usize + 1 };
-                        let mut numbered = String::with_capacity(code.len() + line_count * (digits + 3));
+                        let digits = if line_count == 0 {
+                            1
+                        } else {
+                            (line_count as f32).log10().floor() as usize + 1
+                        };
+                        let mut numbered =
+                            String::with_capacity(code.len() + line_count * (digits + 3));
                         for (i, line) in code.lines().enumerate() {
                             use std::fmt::Write;
-                            let _ = writeln!(numbered, "{:>width$}  {}", i + 1, line, width = digits);
+                            let _ =
+                                writeln!(numbered, "{:>width$}  {}", i + 1, line, width = digits);
                         }
                         ui.label(
                             RichText::new(&numbered)
@@ -1992,7 +2250,7 @@ impl MarkdownRenderer {
 
         // Generate cache key based on code content
         let cache_key = format!("mermaid_{}", {
-            use sha2::{Sha256, Digest};
+            use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(code.as_bytes());
             hex::encode(&hasher.finalize()[..8])
@@ -2052,7 +2310,13 @@ impl MarkdownRenderer {
         ui.add_space(8.0);
     }
 
-    fn render_mermaid_image(&self, ui: &mut Ui, texture: &TextureHandle, code: &str, diagram_type: &str) {
+    fn render_mermaid_image(
+        &self,
+        ui: &mut Ui,
+        texture: &TextureHandle,
+        code: &str,
+        diagram_type: &str,
+    ) {
         egui::Frame::none()
             .fill(Color32::from_rgb(250, 250, 252))
             .inner_margin(egui::Margin::same(16.0))
@@ -2065,13 +2329,13 @@ impl MarkdownRenderer {
                     ui.label(
                         RichText::new("◇")
                             .size(18.0)
-                            .color(Color32::from_rgb(255, 100, 120))
+                            .color(Color32::from_rgb(255, 100, 120)),
                     );
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(format!("Mermaid: {}", diagram_type))
                             .strong()
-                            .color(Color32::from_rgb(60, 70, 90))
+                            .color(Color32::from_rgb(60, 70, 90)),
                     );
                 });
 
@@ -2090,7 +2354,7 @@ impl MarkdownRenderer {
                 egui::CollapsingHeader::new(
                     RichText::new("View Source")
                         .small()
-                        .color(Color32::from_gray(100))
+                        .color(Color32::from_gray(100)),
                 )
                 .default_open(false)
                 .id_salt(format!("mermaid_source_{}", self.code_block_count))
@@ -2104,7 +2368,7 @@ impl MarkdownRenderer {
                                 RichText::new(code)
                                     .monospace()
                                     .size(11.0)
-                                    .color(Color32::from_gray(80))
+                                    .color(Color32::from_gray(80)),
                             );
                         });
                 });
@@ -2131,12 +2395,12 @@ impl MarkdownRenderer {
                     ui.label(
                         RichText::new(spinner_char)
                             .size(18.0)
-                            .color(Color32::from_rgb(100, 140, 200))
+                            .color(Color32::from_rgb(100, 140, 200)),
                     );
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(format!("Rendering {}...", diagram_type))
-                            .color(Color32::from_rgb(80, 90, 110))
+                            .color(Color32::from_rgb(80, 90, 110)),
                     );
                 });
 
@@ -2148,11 +2412,8 @@ impl MarkdownRenderer {
                     egui::vec2(ui.available_width(), placeholder_height),
                     egui::Sense::hover(),
                 );
-                ui.painter().rect_filled(
-                    rect,
-                    4.0,
-                    Color32::from_rgb(230, 235, 240),
-                );
+                ui.painter()
+                    .rect_filled(rect, 4.0, Color32::from_rgb(230, 235, 240));
 
                 // Request repaint to animate spinner
                 ui.ctx().request_repaint();
@@ -2173,13 +2434,13 @@ impl MarkdownRenderer {
                     ui.label(
                         RichText::new("◇")
                             .size(18.0)
-                            .color(Color32::from_rgb(255, 154, 162))
+                            .color(Color32::from_rgb(255, 154, 162)),
                     );
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(format!("Mermaid Diagram: {}", diagram_type))
                             .strong()
-                            .color(Color32::from_rgb(180, 190, 210))
+                            .color(Color32::from_rgb(180, 190, 210)),
                     );
                 });
 
@@ -2200,7 +2461,7 @@ impl MarkdownRenderer {
                 egui::CollapsingHeader::new(
                     RichText::new("View Source")
                         .small()
-                        .color(Color32::from_gray(140))
+                        .color(Color32::from_gray(140)),
                 )
                 .default_open(false)
                 .id_salt(format!("mermaid_source_{}", self.code_block_count))
@@ -2214,7 +2475,7 @@ impl MarkdownRenderer {
                                 RichText::new(code)
                                     .monospace()
                                     .size(11.0)
-                                    .color(Color32::from_rgb(150, 160, 180))
+                                    .color(Color32::from_rgb(150, 160, 180)),
                             );
                         });
                 });
@@ -2229,14 +2490,11 @@ impl MarkdownRenderer {
             .stroke(egui::Stroke::new(1.0, Color32::from_rgb(80, 130, 180)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("💡")
-                            .size(16.0)
-                    );
+                    ui.label(RichText::new("💡").size(16.0));
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new("Install mermaid-cli for full diagram rendering")
-                            .color(Color32::from_rgb(140, 180, 220))
+                            .color(Color32::from_rgb(140, 180, 220)),
                     );
                 });
 
@@ -2247,11 +2505,11 @@ impl MarkdownRenderer {
                     ui.label(
                         RichText::new("Step 1:")
                             .strong()
-                            .color(Color32::from_rgb(180, 180, 200))
+                            .color(Color32::from_rgb(180, 180, 200)),
                     );
                     ui.label(
                         RichText::new("Install Node.js (if not already installed)")
-                            .color(Color32::from_rgb(160, 160, 180))
+                            .color(Color32::from_rgb(160, 160, 180)),
                     );
                 });
 
@@ -2267,11 +2525,11 @@ impl MarkdownRenderer {
                     ui.label(
                         RichText::new("Step 2:")
                             .strong()
-                            .color(Color32::from_rgb(180, 180, 200))
+                            .color(Color32::from_rgb(180, 180, 200)),
                     );
                     ui.label(
                         RichText::new("Install mermaid-cli")
-                            .color(Color32::from_rgb(160, 160, 180))
+                            .color(Color32::from_rgb(160, 160, 180)),
                     );
                 });
 
@@ -2279,8 +2537,12 @@ impl MarkdownRenderer {
 
                 ui.horizontal(|ui| {
                     // Copy command button
-                    if ui.button(RichText::new("📋 Copy command").small()).clicked() {
-                        ui.ctx().copy_text("npm install -g @mermaid-js/mermaid-cli".to_string());
+                    if ui
+                        .button(RichText::new("📋 Copy command").small())
+                        .clicked()
+                    {
+                        ui.ctx()
+                            .copy_text("npm install -g @mermaid-js/mermaid-cli".to_string());
                     }
 
                     ui.add_space(8.0);
@@ -2303,16 +2565,18 @@ impl MarkdownRenderer {
                             RichText::new("npm install -g @mermaid-js/mermaid-cli")
                                 .monospace()
                                 .size(11.0)
-                                .color(Color32::from_rgb(120, 200, 120))
+                                .color(Color32::from_rgb(120, 200, 120)),
                         );
                     });
 
                 ui.add_space(6.0);
 
                 ui.label(
-                    RichText::new("After installation, restart mdview to enable diagram rendering.")
-                        .small()
-                        .color(Color32::from_gray(130))
+                    RichText::new(
+                        "After installation, restart mdview to enable diagram rendering.",
+                    )
+                    .small()
+                    .color(Color32::from_gray(130)),
                 );
             });
     }
@@ -2337,7 +2601,7 @@ impl MarkdownRenderer {
                         RichText::new("brew install node")
                             .monospace()
                             .size(11.0)
-                            .color(Color32::from_rgb(200, 180, 120))
+                            .color(Color32::from_rgb(200, 180, 120)),
                     );
                 });
         }
@@ -2346,7 +2610,8 @@ impl MarkdownRenderer {
         {
             ui.horizontal(|ui| {
                 if ui.button(RichText::new("📋 winget").small()).clicked() {
-                    ui.ctx().copy_text("winget install OpenJS.NodeJS".to_string());
+                    ui.ctx()
+                        .copy_text("winget install OpenJS.NodeJS".to_string());
                 }
                 if ui.button(RichText::new("🌐 nodejs.org").small()).clicked() {
                     let _ = open::that("https://nodejs.org/");
@@ -2362,13 +2627,13 @@ impl MarkdownRenderer {
                             RichText::new("winget install OpenJS.NodeJS")
                                 .monospace()
                                 .size(11.0)
-                                .color(Color32::from_rgb(200, 180, 120))
+                                .color(Color32::from_rgb(200, 180, 120)),
                         );
                         ui.label(
                             RichText::new("# or download installer from nodejs.org")
                                 .monospace()
                                 .size(10.0)
-                                .color(Color32::from_gray(100))
+                                .color(Color32::from_gray(100)),
                         );
                     });
                 });
@@ -2377,11 +2642,19 @@ impl MarkdownRenderer {
         #[cfg(target_os = "linux")]
         {
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("📋 apt (Debian/Ubuntu)").small()).clicked() {
-                    ui.ctx().copy_text("sudo apt install nodejs npm".to_string());
+                if ui
+                    .button(RichText::new("📋 apt (Debian/Ubuntu)").small())
+                    .clicked()
+                {
+                    ui.ctx()
+                        .copy_text("sudo apt install nodejs npm".to_string());
                 }
-                if ui.button(RichText::new("📋 dnf (Fedora)").small()).clicked() {
-                    ui.ctx().copy_text("sudo dnf install nodejs npm".to_string());
+                if ui
+                    .button(RichText::new("📋 dnf (Fedora)").small())
+                    .clicked()
+                {
+                    ui.ctx()
+                        .copy_text("sudo dnf install nodejs npm".to_string());
                 }
                 if ui.button(RichText::new("🌐 nodejs.org").small()).clicked() {
                     let _ = open::that("https://nodejs.org/");
@@ -2397,39 +2670,39 @@ impl MarkdownRenderer {
                             RichText::new("# Debian/Ubuntu:")
                                 .monospace()
                                 .size(10.0)
-                                .color(Color32::from_gray(100))
+                                .color(Color32::from_gray(100)),
                         );
                         ui.label(
                             RichText::new("sudo apt install nodejs npm")
                                 .monospace()
                                 .size(11.0)
-                                .color(Color32::from_rgb(200, 180, 120))
+                                .color(Color32::from_rgb(200, 180, 120)),
                         );
                         ui.add_space(2.0);
                         ui.label(
                             RichText::new("# Fedora:")
                                 .monospace()
                                 .size(10.0)
-                                .color(Color32::from_gray(100))
+                                .color(Color32::from_gray(100)),
                         );
                         ui.label(
                             RichText::new("sudo dnf install nodejs npm")
                                 .monospace()
                                 .size(11.0)
-                                .color(Color32::from_rgb(200, 180, 120))
+                                .color(Color32::from_rgb(200, 180, 120)),
                         );
                         ui.add_space(2.0);
                         ui.label(
                             RichText::new("# Arch:")
                                 .monospace()
                                 .size(10.0)
-                                .color(Color32::from_gray(100))
+                                .color(Color32::from_gray(100)),
                         );
                         ui.label(
                             RichText::new("sudo pacman -S nodejs npm")
                                 .monospace()
                                 .size(11.0)
-                                .color(Color32::from_rgb(200, 180, 120))
+                                .color(Color32::from_rgb(200, 180, 120)),
                         );
                     });
                 });
@@ -2446,7 +2719,7 @@ impl MarkdownRenderer {
             ui.label(
                 RichText::new("Download and install Node.js from nodejs.org")
                     .small()
-                    .color(Color32::from_gray(140))
+                    .color(Color32::from_gray(140)),
             );
         }
     }
@@ -2506,18 +2779,11 @@ impl MarkdownRenderer {
                     .inner_margin(egui::Margin::symmetric(12.0, 6.0))
                     .rounding(4.0)
                     .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(text)
-                                .color(Color32::WHITE)
-                                .size(12.0)
-                        );
+                        ui.label(RichText::new(text).color(Color32::WHITE).size(12.0));
                     });
 
                 if i < metadata.nodes.len() - 1 {
-                    ui.label(
-                        RichText::new(" → ")
-                            .color(Color32::from_gray(120))
-                    );
+                    ui.label(RichText::new(" → ").color(Color32::from_gray(120)));
                 }
             }
         });
@@ -2526,7 +2792,7 @@ impl MarkdownRenderer {
             ui.label(
                 RichText::new("...")
                     .color(Color32::from_gray(100))
-                    .italics()
+                    .italics(),
             );
         }
     }
@@ -2551,7 +2817,7 @@ impl MarkdownRenderer {
                         ui.label(
                             RichText::new(format!("P{}", i + 1))
                                 .color(Color32::WHITE)
-                                .size(11.0)
+                                .size(11.0),
                         );
                     });
 
@@ -2562,92 +2828,117 @@ impl MarkdownRenderer {
         });
 
         ui.label(
-            RichText::new(format!("📨 {} messages between {} participants", arrow_count.max(1), participant_count.max(1)))
-                .color(Color32::from_rgb(140, 180, 220))
+            RichText::new(format!(
+                "📨 {} messages between {} participants",
+                arrow_count.max(1),
+                participant_count.max(1)
+            ))
+            .color(Color32::from_rgb(140, 180, 220)),
         );
     }
 
     fn render_class_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
             RichText::new(format!("📦 {} classes defined", metadata.count1.max(1)))
-                .color(Color32::from_rgb(180, 140, 200))
+                .color(Color32::from_rgb(180, 140, 200)),
         );
     }
 
     fn render_state_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("🔄 State machine with ~{} transitions", metadata.count1.max(1)))
-                .color(Color32::from_rgb(140, 200, 180))
+            RichText::new(format!(
+                "🔄 State machine with ~{} transitions",
+                metadata.count1.max(1)
+            ))
+            .color(Color32::from_rgb(140, 200, 180)),
         );
     }
 
     fn render_gantt_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("📅 Gantt chart with {} tasks", metadata.count1.max(1)))
-                .color(Color32::from_rgb(200, 180, 140))
+            RichText::new(format!(
+                "📅 Gantt chart with {} tasks",
+                metadata.count1.max(1)
+            ))
+            .color(Color32::from_rgb(200, 180, 140)),
         );
     }
 
     fn render_pie_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("🥧 Pie chart with {} slices", metadata.count1.max(1)))
-                .color(Color32::from_rgb(200, 160, 180))
+            RichText::new(format!(
+                "🥧 Pie chart with {} slices",
+                metadata.count1.max(1)
+            ))
+            .color(Color32::from_rgb(200, 160, 180)),
         );
     }
 
     fn render_er_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("🗃️ ER diagram with {} entities/relations", metadata.count1.max(1)))
-                .color(Color32::from_rgb(160, 190, 200))
+            RichText::new(format!(
+                "🗃️ ER diagram with {} entities/relations",
+                metadata.count1.max(1)
+            ))
+            .color(Color32::from_rgb(160, 190, 200)),
         );
     }
 
     fn render_journey_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("🚶 User journey with {} sections", metadata.count1.max(1)))
-                .color(Color32::from_rgb(140, 180, 220))
+            RichText::new(format!(
+                "🚶 User journey with {} sections",
+                metadata.count1.max(1)
+            ))
+            .color(Color32::from_rgb(140, 180, 220)),
         );
     }
 
     fn render_gitgraph_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("🌿 Git graph: {} commits, {} branches", metadata.count1.max(1), metadata.count2))
-                .color(Color32::from_rgb(180, 200, 140))
+            RichText::new(format!(
+                "🌿 Git graph: {} commits, {} branches",
+                metadata.count1.max(1),
+                metadata.count2
+            ))
+            .color(Color32::from_rgb(180, 200, 140)),
         );
     }
 
     fn render_mindmap_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
             RichText::new(format!("🧠 Mind map with {} nodes", metadata.count1.max(1)))
-                .color(Color32::from_rgb(200, 160, 200))
+                .color(Color32::from_rgb(200, 160, 200)),
         );
     }
 
     fn render_timeline_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("📅 Timeline with {} events", metadata.count1.max(1)))
-                .color(Color32::from_rgb(160, 200, 180))
+            RichText::new(format!(
+                "📅 Timeline with {} events",
+                metadata.count1.max(1)
+            ))
+            .color(Color32::from_rgb(160, 200, 180)),
         );
     }
 
     fn render_quadrant_preview_cached(ui: &mut Ui) {
-        ui.label(
-            RichText::new("📊 Quadrant chart")
-                .color(Color32::from_rgb(180, 180, 200))
-        );
+        ui.label(RichText::new("📊 Quadrant chart").color(Color32::from_rgb(180, 180, 200)));
     }
 
     fn render_requirement_preview_cached(ui: &mut Ui, metadata: &MermaidMetadata) {
         ui.label(
-            RichText::new(format!("📋 Requirements diagram with {} items", metadata.count1.max(1)))
-                .color(Color32::from_rgb(200, 180, 160))
+            RichText::new(format!(
+                "📋 Requirements diagram with {} items",
+                metadata.count1.max(1)
+            ))
+            .color(Color32::from_rgb(200, 180, 160)),
         );
     }
 
     fn render_c4_preview_cached(ui: &mut Ui) {
         ui.label(
-            RichText::new("🏗️ C4 Architecture diagram")
-                .color(Color32::from_rgb(160, 180, 200))
+            RichText::new("🏗️ C4 Architecture diagram").color(Color32::from_rgb(160, 180, 200)),
         );
     }
 
@@ -2655,7 +2946,7 @@ impl MarkdownRenderer {
         ui.label(
             RichText::new(format!("📊 Diagram ({} lines)", metadata.count1))
                 .color(Color32::from_gray(160))
-                .italics()
+                .italics(),
         );
     }
 
@@ -2698,11 +2989,13 @@ impl MarkdownRenderer {
                         self.render_mixed_content_with_annotations(
                             ui,
                             &text,
-                            base_font_size,
-                            item_start,
+                            MixedContentStyle {
+                                base_font_size,
+                                start_offset: item_start,
+                                code_text_color: None,
+                                in_strikethrough: self.in_strikethrough,
+                            },
                             &[],
-                            None,
-                            self.in_strikethrough,
                         );
                     },
                 );
@@ -2717,9 +3010,10 @@ impl MarkdownRenderer {
 
         ui.add_space(8.0);
 
-        let num_cols = self.table_header.len().max(
-            self.table_rows.first().map(|r| r.len()).unwrap_or(0)
-        );
+        let num_cols = self
+            .table_header
+            .len()
+            .max(self.table_rows.first().map(|r| r.len()).unwrap_or(0));
 
         if num_cols == 0 {
             return;
@@ -2738,7 +3032,8 @@ impl MarkdownRenderer {
                         // Render header row
                         if !self.table_header.is_empty() {
                             for (col_idx, cell) in self.table_header.iter().enumerate() {
-                                let alignment = self.table_alignments
+                                let alignment = self
+                                    .table_alignments
                                     .get(col_idx)
                                     .copied()
                                     .unwrap_or(Alignment::None);
@@ -2750,19 +3045,30 @@ impl MarkdownRenderer {
 
                                 match alignment {
                                     Alignment::Left | Alignment::None => {
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            ui.label(text);
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(text);
+                                            },
+                                        );
                                     }
                                     Alignment::Center => {
-                                        ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
-                                            ui.label(text);
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::centered_and_justified(
+                                                egui::Direction::LeftToRight,
+                                            ),
+                                            |ui| {
+                                                ui.label(text);
+                                            },
+                                        );
                                     }
                                     Alignment::Right => {
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(text);
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(text);
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -2772,7 +3078,8 @@ impl MarkdownRenderer {
                         // Render data rows
                         for row in &self.table_rows {
                             for (col_idx, cell) in row.iter().enumerate() {
-                                let alignment = self.table_alignments
+                                let alignment = self
+                                    .table_alignments
                                     .get(col_idx)
                                     .copied()
                                     .unwrap_or(Alignment::None);
@@ -2783,19 +3090,30 @@ impl MarkdownRenderer {
 
                                 match alignment {
                                     Alignment::Left | Alignment::None => {
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            ui.label(text);
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(text);
+                                            },
+                                        );
                                     }
                                     Alignment::Center => {
-                                        ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
-                                            ui.label(text);
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::centered_and_justified(
+                                                egui::Direction::LeftToRight,
+                                            ),
+                                            |ui| {
+                                                ui.label(text);
+                                            },
+                                        );
                                     }
                                     Alignment::Right => {
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(text);
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(text);
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -2822,7 +3140,9 @@ impl MarkdownRenderer {
         if let Some(texture) = self.image_cache.get(url) {
             let size = texture.size_vec2();
             // Scale to fit width if needed
-            let max_width = ui.available_width().min(self.image_max_width.unwrap_or(600.0));
+            let max_width = ui
+                .available_width()
+                .min(self.image_max_width.unwrap_or(600.0));
             let scale = if size.x > max_width {
                 max_width / size.x
             } else {
@@ -2884,7 +3204,9 @@ impl MarkdownRenderer {
                         // Small file - load synchronously (fast enough)
                         if let Ok(texture) = load_image_texture(ui.ctx(), &path, url) {
                             let size = texture.size_vec2();
-                            let max_width = ui.available_width().min(self.image_max_width.unwrap_or(600.0));
+                            let max_width = ui
+                                .available_width()
+                                .min(self.image_max_width.unwrap_or(600.0));
                             let scale = if size.x > max_width {
                                 max_width / size.x
                             } else {
@@ -2959,7 +3281,7 @@ impl MarkdownRenderer {
             ui.label(
                 RichText::new(spinner_char)
                     .size(20.0)
-                    .color(Color32::from_rgb(100, 140, 200))
+                    .color(Color32::from_rgb(100, 140, 200)),
             );
             let display_text = if !title.is_empty() {
                 format!("Loading: {}", title)
@@ -3007,7 +3329,11 @@ impl MarkdownRenderer {
                         if canonical.starts_with(&canonical_base) {
                             return Some(canonical);
                         }
-                        log::warn!("Image path traversal blocked: {:?} is outside {:?}", url, base);
+                        log::warn!(
+                            "Image path traversal blocked: {:?} is outside {:?}",
+                            url,
+                            base
+                        );
                         return None;
                     }
                     return Some(canonical);
@@ -3022,7 +3348,6 @@ impl MarkdownRenderer {
 
         None
     }
-
 
     fn render_horizontal_rule(&self, ui: &mut Ui) {
         ui.add_space(8.0);
@@ -3081,11 +3406,17 @@ fn resolve_syntect_theme_name(theme_name: &str, is_dark: bool) -> &str {
 }
 
 #[cfg(feature = "syntax-highlighting")]
-fn highlight_code(code: &str, language: Option<&str>, theme_name: &str, is_dark: bool, show_line_numbers: bool) -> Option<egui::text::LayoutJob> {
+fn highlight_code(
+    code: &str,
+    language: Option<&str>,
+    theme_name: &str,
+    is_dark: bool,
+    show_line_numbers: bool,
+) -> Option<egui::text::LayoutJob> {
+    use std::sync::OnceLock;
+    use syntect::easy::HighlightLines;
     use syntect::highlighting::ThemeSet;
     use syntect::parsing::SyntaxSet;
-    use syntect::easy::HighlightLines;
-    use std::sync::OnceLock;
 
     // Lazy-load syntax and theme sets (they're large)
     static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
@@ -3103,7 +3434,9 @@ fn highlight_code(code: &str, language: Option<&str>, theme_name: &str, is_dark:
     let resolved_theme = resolve_syntect_theme_name(theme_name, is_dark);
 
     // Use theme from config, falling back to base16-ocean.dark or any available theme
-    let theme = ts.themes.get(resolved_theme)
+    let theme = ts
+        .themes
+        .get(resolved_theme)
         .or_else(|| ts.themes.get("base16-ocean.dark"))
         .or_else(|| ts.themes.values().next())?;
     let mut highlighter = HighlightLines::new(syntax, theme);
@@ -3116,7 +3449,11 @@ fn highlight_code(code: &str, language: Option<&str>, theme_name: &str, is_dark:
     let line_count = lines.len();
     // Calculate width for line number gutter (digits needed + padding)
     let line_num_width = if show_line_numbers {
-        let digits = if line_count == 0 { 1 } else { (line_count as f32).log10().floor() as usize + 1 };
+        let digits = if line_count == 0 {
+            1
+        } else {
+            (line_count as f32).log10().floor() as usize + 1
+        };
         digits + 2 // extra space for padding
     } else {
         0
@@ -3179,7 +3516,13 @@ fn syntect_color_to_egui(style: syntect::highlighting::Style) -> Color32 {
 }
 
 #[cfg(not(feature = "syntax-highlighting"))]
-fn highlight_code(_code: &str, _language: Option<&str>, _theme_name: &str, _is_dark: bool, _show_line_numbers: bool) -> Option<egui::text::LayoutJob> {
+fn highlight_code(
+    _code: &str,
+    _language: Option<&str>,
+    _theme_name: &str,
+    _is_dark: bool,
+    _show_line_numbers: bool,
+) -> Option<egui::text::LayoutJob> {
     None
 }
 
@@ -3190,8 +3533,7 @@ fn load_image_texture(
     name: &str,
 ) -> Result<TextureHandle, String> {
     // Read the file
-    let image_data = std::fs::read(path)
-        .map_err(|e| format!("Failed to read image: {}", e))?;
+    let image_data = std::fs::read(path).map_err(|e| format!("Failed to read image: {}", e))?;
 
     load_image_from_memory(ctx, &image_data, name)
 }
@@ -3213,11 +3555,7 @@ fn load_image_from_memory(
     // Create the texture
     let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
 
-    Ok(ctx.load_texture(
-        name,
-        color_image,
-        egui::TextureOptions::LINEAR,
-    ))
+    Ok(ctx.load_texture(name, color_image, egui::TextureOptions::LINEAR))
 }
 
 /// Truncate a URL for display
@@ -3238,7 +3576,9 @@ fn fetch_remote_image_async(url: &str) -> Result<Vec<u8>, String> {
         .timeout_write(IMAGE_FETCH_TIMEOUT)
         .build();
 
-    let response = agent.get(url).call()
+    let response = agent
+        .get(url)
+        .call()
         .map_err(|e| format!("Failed to fetch: {}", e))?;
 
     // Check content type
@@ -3252,7 +3592,8 @@ fn fetch_remote_image_async(url: &str) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
 
     // Read with size limit
-    response.into_reader()
+    response
+        .into_reader()
         .take(max_size as u64)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("Failed to read: {}", e))?;
@@ -3268,25 +3609,36 @@ fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
 
 /// Detect the type of Mermaid diagram from its source code
 fn detect_mermaid_type(code: &str) -> &'static str {
-    let first_line = code.lines()
+    let first_line = code
+        .lines()
         .find(|l| !l.trim().is_empty())
         .map(|l| l.trim())
         .unwrap_or("");
 
     // Use case-insensitive prefix matching (no allocation)
-    if starts_with_ignore_case(first_line, "graph") || starts_with_ignore_case(first_line, "flowchart") {
+    if starts_with_ignore_case(first_line, "graph")
+        || starts_with_ignore_case(first_line, "flowchart")
+    {
         "Flowchart"
-    } else if starts_with_ignore_case(first_line, "sequencediagram") || starts_with_ignore_case(first_line, "sequence") {
+    } else if starts_with_ignore_case(first_line, "sequencediagram")
+        || starts_with_ignore_case(first_line, "sequence")
+    {
         "Sequence Diagram"
-    } else if starts_with_ignore_case(first_line, "classdiagram") || starts_with_ignore_case(first_line, "class") {
+    } else if starts_with_ignore_case(first_line, "classdiagram")
+        || starts_with_ignore_case(first_line, "class")
+    {
         "Class Diagram"
-    } else if starts_with_ignore_case(first_line, "statediagram") || starts_with_ignore_case(first_line, "state") {
+    } else if starts_with_ignore_case(first_line, "statediagram")
+        || starts_with_ignore_case(first_line, "state")
+    {
         "State Diagram"
     } else if starts_with_ignore_case(first_line, "gantt") {
         "Gantt Chart"
     } else if starts_with_ignore_case(first_line, "pie") {
         "Pie Chart"
-    } else if starts_with_ignore_case(first_line, "erdiagram") || starts_with_ignore_case(first_line, "er") {
+    } else if starts_with_ignore_case(first_line, "erdiagram")
+        || starts_with_ignore_case(first_line, "er")
+    {
         "ER Diagram"
     } else if starts_with_ignore_case(first_line, "journey") {
         "User Journey"
@@ -3300,7 +3652,9 @@ fn detect_mermaid_type(code: &str) -> &'static str {
         "Quadrant Chart"
     } else if starts_with_ignore_case(first_line, "requirementdiagram") {
         "Requirement Diagram"
-    } else if starts_with_ignore_case(first_line, "c4context") || starts_with_ignore_case(first_line, "c4container") {
+    } else if starts_with_ignore_case(first_line, "c4context")
+        || starts_with_ignore_case(first_line, "c4container")
+    {
         "C4 Diagram"
     } else {
         "Diagram"
@@ -3328,7 +3682,8 @@ fn extract_node_text(line: &str) -> String {
     }
 
     // Try to extract node ID before any special characters
-    let node_id: String = line.chars()
+    let node_id: String = line
+        .chars()
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect();
 
@@ -3342,7 +3697,7 @@ fn extract_node_text(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pulldown_cmark::{Parser, Options};
+    use pulldown_cmark::{Options, Parser};
 
     /// Helper: parse markdown to owned events
     fn parse_events(markdown: &str) -> Vec<Event<'static>> {
@@ -3361,13 +3716,30 @@ mod tests {
             text_byte_len: 10,
             heading_index: None,
         };
-        assert_eq!(block.height(), 40.0, "should use estimated when actual is None");
+        assert_eq!(
+            block.height(),
+            40.0,
+            "should use estimated when actual is None"
+        );
 
         let block_with_actual = ContentBlock {
             actual_height: Some(55.0),
             ..block
         };
-        assert_eq!(block_with_actual.height(), 55.0, "should use actual when available");
+        assert_eq!(
+            block_with_actual.height(),
+            55.0,
+            "should use actual when available"
+        );
+    }
+
+    #[test]
+    fn test_byte_offset_for_char_index_handles_unicode() {
+        let text = "aé日";
+        assert_eq!(byte_offset_for_char_index(text, 0), 0);
+        assert_eq!(byte_offset_for_char_index(text, 1), 1);
+        assert_eq!(byte_offset_for_char_index(text, 2), 3);
+        assert_eq!(byte_offset_for_char_index(text, 3), text.len());
     }
 
     #[test]
@@ -3503,9 +3875,8 @@ mod tests {
         let blocks = compute_block_map(&events, 800.0);
 
         // All events should be covered by blocks (no gaps)
-        let total_events_in_blocks: usize = blocks.iter()
-            .map(|b| b.event_end - b.event_start)
-            .sum();
+        let total_events_in_blocks: usize =
+            blocks.iter().map(|b| b.event_end - b.event_start).sum();
 
         // Each block's range should be valid
         for block in &blocks {

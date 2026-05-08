@@ -125,20 +125,49 @@ impl FolderState {
 
 /// Maximum recursion depth for directory scanning (prevents stack overflow on deep trees)
 const MAX_SCAN_DEPTH: usize = 32;
+/// Hard cap for scanned entries to avoid freezing on very large trees
+const MAX_SCANNED_ENTRIES: usize = 20_000;
+/// Approximate row height used by the virtualized file list
+const FILE_BROWSER_ROW_HEIGHT: f32 = 24.0;
+const IGNORED_DIRECTORIES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+];
 
 /// Scan a directory for markdown files and subdirectories
 fn scan_directory(path: &Path, depth: usize) -> Result<Vec<FileEntry>, std::io::Error> {
     let mut entries = Vec::new();
+    let mut scanned_entries = 0usize;
+    scan_directory_inner(path, depth, &mut scanned_entries, &mut entries)?;
+    Ok(entries)
+}
+
+fn scan_directory_inner(
+    path: &Path,
+    depth: usize,
+    scanned_entries: &mut usize,
+    entries: &mut Vec<FileEntry>,
+) -> Result<(), std::io::Error> {
+    if *scanned_entries >= MAX_SCANNED_ENTRIES {
+        return Ok(());
+    }
 
     // Prevent excessive recursion depth
     if depth >= MAX_SCAN_DEPTH {
-        log::warn!("Directory scan depth limit ({}) reached at {:?}", MAX_SCAN_DEPTH, path);
-        return Ok(entries);
+        log::warn!(
+            "Directory scan depth limit ({}) reached at {:?}",
+            MAX_SCAN_DEPTH,
+            path
+        );
+        return Ok(());
     }
 
-    let mut dir_entries: Vec<_> = std::fs::read_dir(path)?
-        .filter_map(|e| e.ok())
-        .collect();
+    let mut dir_entries: Vec<_> = std::fs::read_dir(path)?.filter_map(|e| e.ok()).collect();
 
     // Sort: directories first, then by name
     dir_entries.sort_by(|a, b| {
@@ -162,40 +191,64 @@ fn scan_directory(path: &Path, depth: usize) -> Result<Vec<FileEntry>, std::io::
         }
 
         if entry_path.is_dir() {
+            if IGNORED_DIRECTORIES.contains(&name.as_str()) {
+                continue;
+            }
+
             // Skip symlinks to directories to prevent cycles
-            if entry_path.symlink_metadata().map(|m| m.is_symlink()).unwrap_or(false) {
+            if entry_path
+                .symlink_metadata()
+                .map(|m| m.is_symlink())
+                .unwrap_or(false)
+            {
                 log::debug!("Skipping symlinked directory: {:?}", entry_path);
                 continue;
             }
 
+            if *scanned_entries >= MAX_SCANNED_ENTRIES {
+                log::warn!(
+                    "File browser scan capped at {} entries under {:?}",
+                    MAX_SCANNED_ENTRIES,
+                    path
+                );
+                break;
+            }
             entries.push(FileEntry {
                 path: entry_path.clone(),
                 name,
                 is_dir: true,
                 depth,
             });
+            *scanned_entries += 1;
 
             // Recursively scan subdirectory
-            if let Ok(sub_entries) = scan_directory(&entry_path, depth + 1) {
-                entries.extend(sub_entries);
-            }
+            scan_directory_inner(&entry_path, depth + 1, scanned_entries, entries)?;
         } else if is_markdown_file(&entry_path) {
+            if *scanned_entries >= MAX_SCANNED_ENTRIES {
+                log::warn!(
+                    "File browser scan capped at {} entries under {:?}",
+                    MAX_SCANNED_ENTRIES,
+                    path
+                );
+                break;
+            }
             entries.push(FileEntry {
                 path: entry_path,
                 name,
                 is_dir: false,
                 depth,
             });
+            *scanned_entries += 1;
         }
     }
 
-    Ok(entries)
+    Ok(())
 }
 
 /// Check if a file is a markdown file (including MDX)
 fn is_markdown_file(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) => matches!(ext.to_lowercase().as_str(), "md" | "markdown" | "mdx" | "txt"),
+        Some(ext) => matches!(ext.to_lowercase().as_str(), "md" | "markdown" | "mdx"),
         None => false,
     }
 }
@@ -240,17 +293,25 @@ impl FileBrowserPanel {
                 ui.label(
                     RichText::new(format!("\u{1F4C1} {}", name))
                         .color(palette::TEXT_PRIMARY)
-                        .strong()
+                        .strong(),
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Close button
-                    if ui.small_button("\u{2715}").on_hover_text("Close folder").clicked() {
+                    if ui
+                        .small_button("\u{2715}")
+                        .on_hover_text("Close folder")
+                        .clicked()
+                    {
                         should_close = true;
                     }
 
                     // Refresh button
-                    if ui.small_button("\u{21BB}").on_hover_text("Refresh").clicked() {
+                    if ui
+                        .small_button("\u{21BB}")
+                        .on_hover_text("Refresh")
+                        .clicked()
+                    {
                         should_refresh = true;
                     }
                 });
@@ -266,32 +327,31 @@ impl FileBrowserPanel {
             let visible_entries = folder_state.visible_entries();
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for (idx, entry) in visible_entries.iter().enumerate() {
-                        let is_expanded = folder_state.is_expanded(&entry.path);
-                        let is_current = current_file
-                            .map(|f| f == entry.path.as_path())
-                            .unwrap_or(false);
+                .show_rows(
+                    ui,
+                    FILE_BROWSER_ROW_HEIGHT,
+                    visible_entries.len(),
+                    |ui, row_range| {
+                        for idx in row_range {
+                            let entry = visible_entries[idx];
+                            let is_expanded = folder_state.is_expanded(&entry.path);
+                            let is_current = current_file
+                                .map(|f| f == entry.path.as_path())
+                                .unwrap_or(false);
 
-                        let response = self.render_entry_data(
-                            ui,
-                            &entry.name,
-                            entry.is_dir,
-                            entry.depth,
-                            is_expanded,
-                            idx,
-                            is_current,
-                        );
+                            let response =
+                                self.render_entry_data(ui, entry, idx, is_expanded, is_current);
 
-                        if response.clicked() {
-                            if entry.is_dir {
-                                dir_to_toggle = Some(entry.path.clone());
-                            } else {
-                                file_to_open = Some(entry.path.clone());
+                            if response.clicked() {
+                                if entry.is_dir {
+                                    dir_to_toggle = Some(entry.path.clone());
+                                } else {
+                                    file_to_open = Some(entry.path.clone());
+                                }
                             }
                         }
-                    }
-                });
+                    },
+                );
         }
 
         // Apply mutations after UI rendering
@@ -313,15 +373,13 @@ impl FileBrowserPanel {
     fn render_entry_data(
         &mut self,
         ui: &mut egui::Ui,
-        name: &str,
-        is_dir: bool,
-        depth: usize,
-        is_expanded: bool,
+        entry: &FileEntry,
         idx: usize,
+        is_expanded: bool,
         is_current: bool,
     ) -> egui::Response {
-        let indent = depth as f32 * 16.0;
-        let height = 24.0;
+        let indent = entry.depth as f32 * 16.0;
+        let height = FILE_BROWSER_ROW_HEIGHT;
 
         let (rect, response) = ui.allocate_exact_size(
             Vec2::new(ui.available_width(), height),
@@ -343,22 +401,21 @@ impl FileBrowserPanel {
         };
 
         if bg_color != egui::Color32::TRANSPARENT {
-            ui.painter().rect_filled(rect, Rounding::same(4.0), bg_color);
+            ui.painter()
+                .rect_filled(rect, Rounding::same(4.0), bg_color);
         }
 
         // Selection indicator
         if is_current {
-            let indicator_rect = egui::Rect::from_min_size(
-                rect.min,
-                Vec2::new(3.0, rect.height()),
-            );
-            ui.painter().rect_filled(indicator_rect, Rounding::same(1.0), palette::ACCENT);
+            let indicator_rect = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height()));
+            ui.painter()
+                .rect_filled(indicator_rect, Rounding::same(1.0), palette::ACCENT);
         }
 
         // Icon and text
         let text_start = rect.min + Vec2::new(8.0 + indent, (rect.height() - 14.0) / 2.0);
 
-        let (icon, icon_color) = if is_dir {
+        let (icon, icon_color) = if entry.is_dir {
             if is_expanded {
                 ("\u{1F4C2}", palette::ACCENT) // Open folder
             } else {
@@ -385,7 +442,7 @@ impl FileBrowserPanel {
         ui.painter().text(
             text_start + Vec2::new(20.0, 0.0),
             egui::Align2::LEFT_TOP,
-            name,
+            &entry.name,
             egui::FontId::proportional(13.0),
             text_color,
         );
@@ -408,15 +465,16 @@ pub fn rfd_open_folder() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_is_markdown_file() {
         assert!(is_markdown_file(Path::new("test.md")));
         assert!(is_markdown_file(Path::new("test.markdown")));
-        assert!(is_markdown_file(Path::new("test.txt")));
+        assert!(is_markdown_file(Path::new("test.mdx")));
         assert!(!is_markdown_file(Path::new("test.rs")));
+        assert!(!is_markdown_file(Path::new("test.txt")));
         assert!(!is_markdown_file(Path::new("test")));
     }
 
@@ -452,9 +510,23 @@ mod tests {
 
         let entries = scan_directory(dir.path(), 0).unwrap();
 
-        // Should have: docs/ (dir), guide.md, readme.md, notes.txt
-        // code.rs should be excluded
+        // Should have: docs/ (dir), guide.md, readme.md
+        // notes.txt and code.rs should be excluded
         let md_files: Vec<_> = entries.iter().filter(|e| !e.is_dir).collect();
-        assert_eq!(md_files.len(), 3); // readme.md, notes.txt, docs/guide.md
+        assert_eq!(md_files.len(), 2); // readme.md, docs/guide.md
+    }
+
+    #[test]
+    fn test_scan_directory_skips_ignored_directories() {
+        let dir = tempdir().unwrap();
+        let target_dir = dir.path().join("target");
+        fs::create_dir(&target_dir).unwrap();
+        fs::write(target_dir.join("generated.md"), "# Generated").unwrap();
+        fs::write(dir.path().join("readme.md"), "# Readme").unwrap();
+
+        let entries = scan_directory(dir.path(), 0).unwrap();
+        assert!(entries
+            .iter()
+            .all(|entry| !entry.path.starts_with(&target_dir)));
     }
 }

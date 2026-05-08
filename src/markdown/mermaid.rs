@@ -4,18 +4,15 @@
 //! Native rendering is disabled due to upstream repo issues on Windows.
 //! Install mermaid-cli for support: npm install -g @mermaid-js/mermaid-cli
 
-use std::sync::OnceLock;
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// Cached check for mmdc availability (computed once at startup)
 static MMDC_AVAILABLE: OnceLock<bool> = OnceLock::new();
 
 /// Check if mermaid-cli (mmdc) is available in PATH
 pub fn is_mmdc_available() -> bool {
-    Command::new("mmdc")
-        .arg("--version")
-        .output()
-        .is_ok()
+    Command::new("mmdc").arg("--version").output().is_ok()
 }
 
 /// Get cached mmdc availability status
@@ -34,8 +31,8 @@ fn check_mmdc_available() -> bool {
 /// Render mermaid via official CLI (mmdc)
 /// Requires: npm install -g @mermaid-js/mermaid-cli
 pub fn render_mermaid_via_cli(code: &str, scale: f32) -> Result<Vec<u8>, String> {
-    use std::fs;
     use std::env;
+    use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -47,8 +44,7 @@ pub fn render_mermaid_via_cli(code: &str, scale: f32) -> Result<Vec<u8>, String>
     let output_path = temp_dir.join(format!("mdview_mermaid_{}_{}.png", std::process::id(), seq));
 
     // Write mermaid code to temp file
-    fs::write(&input_path, code)
-        .map_err(|e| format!("Failed to write temp file: {}", e))?;
+    fs::write(&input_path, code).map_err(|e| format!("Failed to write temp file: {}", e))?;
 
     // Calculate dimensions based on scale
     let width = (800.0 * scale) as u32;
@@ -70,31 +66,46 @@ pub fn render_mermaid_via_cli(code: &str, scale: f32) -> Result<Vec<u8>, String>
         .map_err(|e| {
             // Clean up input on command failure
             if let Err(ce) = fs::remove_file(&input_path) {
-                log::warn!("Failed to clean up mermaid temp input {:?}: {}", input_path, ce);
+                log::warn!(
+                    "Failed to clean up mermaid temp input {:?}: {}",
+                    input_path,
+                    ce
+                );
             }
             format!("Failed to run mmdc: {}", e)
         })?;
 
     // Clean up input file
     if let Err(e) = fs::remove_file(&input_path) {
-        log::warn!("Failed to clean up mermaid temp input {:?}: {}", input_path, e);
+        log::warn!(
+            "Failed to clean up mermaid temp input {:?}: {}",
+            input_path,
+            e
+        );
     }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if let Err(e) = fs::remove_file(&output_path) {
-            log::debug!("Failed to clean up mermaid temp output {:?}: {}", output_path, e);
+            log::debug!(
+                "Failed to clean up mermaid temp output {:?}: {}",
+                output_path,
+                e
+            );
         }
         return Err(format!("mmdc failed: {}", stderr));
     }
 
     // Read output PNG
-    let png_data = fs::read(&output_path)
-        .map_err(|e| format!("Failed to read output: {}", e))?;
+    let png_data = fs::read(&output_path).map_err(|e| format!("Failed to read output: {}", e))?;
 
     // Clean up output file
     if let Err(e) = fs::remove_file(&output_path) {
-        log::warn!("Failed to clean up mermaid temp output {:?}: {}", output_path, e);
+        log::warn!(
+            "Failed to clean up mermaid temp output {:?}: {}",
+            output_path,
+            e
+        );
     }
 
     log::debug!("mermaid-cli rendered {} bytes", png_data.len());

@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use pulldown_cmark::{Event, Options, Parser, Tag, HeadingLevel, CodeBlockKind};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 
 use crate::config::Config;
 

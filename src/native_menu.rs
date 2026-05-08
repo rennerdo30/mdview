@@ -84,7 +84,8 @@ impl NativeMenuBar {
         let file_menu = Submenu::new("File", true);
 
         let open_item = MenuItem::new("Open...", true, Some(cmd_accel(Code::KeyO)));
-        let open_folder_item = MenuItem::new("Open Folder...", true, Some(cmd_shift_accel(Code::KeyO)));
+        let open_folder_item =
+            MenuItem::new("Open Folder...", true, Some(cmd_shift_accel(Code::KeyO)));
         let reload_item = MenuItem::new("Reload", true, Some(Accelerator::new(None, Code::F5)));
         let close_item = MenuItem::new("Close", true, Some(cmd_accel(Code::KeyW)));
         let export_pdf_item = MenuItem::new("Export as PDF...", true, Some(cmd_accel(Code::KeyP)));
@@ -111,8 +112,13 @@ impl NativeMenuBar {
         // === View Menu ===
         let view_menu = Submenu::new("View", true);
 
-        let toggle_toc_item = MenuItem::new("Toggle Table of Contents", true, Some(cmd_accel(Code::KeyT)));
-        let toggle_browser_item = MenuItem::new("Toggle File Browser", true, Some(cmd_accel(Code::KeyE)));
+        let toggle_toc_item = MenuItem::new(
+            "Toggle Table of Contents",
+            true,
+            Some(cmd_accel(Code::KeyT)),
+        );
+        let toggle_browser_item =
+            MenuItem::new("Toggle File Browser", true, Some(cmd_accel(Code::KeyE)));
         let zoom_in_item = MenuItem::new("Zoom In", true, Some(cmd_accel(Code::Equal)));
         let zoom_out_item = MenuItem::new("Zoom Out", true, Some(cmd_accel(Code::Minus)));
         let zoom_reset_item = MenuItem::new("Reset Zoom", true, Some(cmd_accel(Code::Digit0)));
@@ -120,7 +126,8 @@ impl NativeMenuBar {
         // Reading Width submenu
         let reading_width_menu = Submenu::new("Reading Width", true);
         let width_full_item = MenuItem::new("Full Width", true, None::<Accelerator>);
-        let width_comfortable_item = MenuItem::new("Comfortable (720px)", true, None::<Accelerator>);
+        let width_comfortable_item =
+            MenuItem::new("Comfortable (720px)", true, None::<Accelerator>);
         let width_narrow_item = MenuItem::new("Narrow (560px)", true, None::<Accelerator>);
         let _ = reading_width_menu.append(&width_full_item);
         let _ = reading_width_menu.append(&width_comfortable_item);

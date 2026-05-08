@@ -113,19 +113,54 @@ fn parse_keybinding(binding: &str) -> Option<ParsedKeybinding> {
     }
 
     let key = match key_str.to_uppercase().as_str() {
-        "A" => Key::A, "B" => Key::B, "C" => Key::C, "D" => Key::D,
-        "E" => Key::E, "F" => Key::F, "G" => Key::G, "H" => Key::H,
-        "I" => Key::I, "J" => Key::J, "K" => Key::K, "L" => Key::L,
-        "M" => Key::M, "N" => Key::N, "O" => Key::O, "P" => Key::P,
-        "Q" => Key::Q, "R" => Key::R, "S" => Key::S, "T" => Key::T,
-        "U" => Key::U, "V" => Key::V, "W" => Key::W, "X" => Key::X,
-        "Y" => Key::Y, "Z" => Key::Z,
-        "0" => Key::Num0, "1" => Key::Num1, "2" => Key::Num2, "3" => Key::Num3,
-        "4" => Key::Num4, "5" => Key::Num5, "6" => Key::Num6, "7" => Key::Num7,
-        "8" => Key::Num8, "9" => Key::Num9,
-        "F1" => Key::F1, "F2" => Key::F2, "F3" => Key::F3, "F4" => Key::F4,
-        "F5" => Key::F5, "F6" => Key::F6, "F7" => Key::F7, "F8" => Key::F8,
-        "F9" => Key::F9, "F10" => Key::F10, "F11" => Key::F11, "F12" => Key::F12,
+        "A" => Key::A,
+        "B" => Key::B,
+        "C" => Key::C,
+        "D" => Key::D,
+        "E" => Key::E,
+        "F" => Key::F,
+        "G" => Key::G,
+        "H" => Key::H,
+        "I" => Key::I,
+        "J" => Key::J,
+        "K" => Key::K,
+        "L" => Key::L,
+        "M" => Key::M,
+        "N" => Key::N,
+        "O" => Key::O,
+        "P" => Key::P,
+        "Q" => Key::Q,
+        "R" => Key::R,
+        "S" => Key::S,
+        "T" => Key::T,
+        "U" => Key::U,
+        "V" => Key::V,
+        "W" => Key::W,
+        "X" => Key::X,
+        "Y" => Key::Y,
+        "Z" => Key::Z,
+        "0" => Key::Num0,
+        "1" => Key::Num1,
+        "2" => Key::Num2,
+        "3" => Key::Num3,
+        "4" => Key::Num4,
+        "5" => Key::Num5,
+        "6" => Key::Num6,
+        "7" => Key::Num7,
+        "8" => Key::Num8,
+        "9" => Key::Num9,
+        "F1" => Key::F1,
+        "F2" => Key::F2,
+        "F3" => Key::F3,
+        "F4" => Key::F4,
+        "F5" => Key::F5,
+        "F6" => Key::F6,
+        "F7" => Key::F7,
+        "F8" => Key::F8,
+        "F9" => Key::F9,
+        "F10" => Key::F10,
+        "F11" => Key::F11,
+        "F12" => Key::F12,
         "ESCAPE" | "ESC" => Key::Escape,
         "ENTER" | "RETURN" => Key::Enter,
         "SPACE" => Key::Space,
@@ -162,10 +197,10 @@ fn is_keybinding_pressed(ctx: &egui::Context, binding: &str) -> bool {
 /// Check if a pre-parsed keybinding is pressed (more efficient for cached keybindings)
 fn is_parsed_keybinding_pressed(ctx: &egui::Context, parsed: &ParsedKeybinding) -> bool {
     ctx.input(|i| {
-        i.key_pressed(parsed.key) &&
-        i.modifiers.command == parsed.modifiers.command &&
-        i.modifiers.alt == parsed.modifiers.alt &&
-        i.modifiers.shift == parsed.modifiers.shift
+        i.key_pressed(parsed.key)
+            && i.modifiers.command == parsed.modifiers.command
+            && i.modifiers.alt == parsed.modifiers.alt
+            && i.modifiers.shift == parsed.modifiers.shift
     })
 }
 
@@ -178,14 +213,18 @@ mod friendly_errors {
         match e.kind() {
             ErrorKind::NotFound => "File not found. It may have been moved or deleted.".to_string(),
             ErrorKind::PermissionDenied => "Permission denied. Check file permissions.".to_string(),
-            ErrorKind::InvalidData => "File contains invalid data. It may be corrupted.".to_string(),
+            ErrorKind::InvalidData => {
+                "File contains invalid data. It may be corrupted.".to_string()
+            }
             _ => format!("Could not open file: {}", e),
         }
     }
 
     pub fn format_folder_error(e: &std::io::Error) -> String {
         match e.kind() {
-            ErrorKind::NotFound => "Folder not found. It may have been moved or deleted.".to_string(),
+            ErrorKind::NotFound => {
+                "Folder not found. It may have been moved or deleted.".to_string()
+            }
             ErrorKind::PermissionDenied => "Cannot access folder. Check permissions.".to_string(),
             _ => format!("Could not open folder: {}", e),
         }
@@ -219,7 +258,6 @@ mod friendly_errors {
     pub fn format_config_error(action: &str, e: &impl std::fmt::Display) -> String {
         format!("Could not {} config file: {}", action, e)
     }
-
 }
 
 fn format_load_error(e: &std::io::Error) -> String {
@@ -231,17 +269,25 @@ mod shortcuts {
     /// Get the platform-specific modifier key symbol
     pub fn modifier() -> &'static str {
         #[cfg(target_os = "macos")]
-        { "\u{2318}" } // ⌘
+        {
+            "\u{2318}"
+        } // ⌘
         #[cfg(not(target_os = "macos"))]
-        { "Ctrl+" }
+        {
+            "Ctrl+"
+        }
     }
 
     /// Get the platform-specific shift modifier
     pub fn shift_modifier() -> &'static str {
         #[cfg(target_os = "macos")]
-        { "\u{21E7}" } // ⇧
+        {
+            "\u{21E7}"
+        } // ⇧
         #[cfg(not(target_os = "macos"))]
-        { "Shift+" }
+        {
+            "Shift+"
+        }
     }
 
     /// Format a shortcut with the key (e.g., "O" -> "⌘O" or "Ctrl+O")
@@ -252,9 +298,13 @@ mod shortcuts {
     /// Format a shortcut with shift (e.g., "O" -> "⇧⌘O" or "Ctrl+Shift+O")
     pub fn format_shift(key: &str) -> String {
         #[cfg(target_os = "macos")]
-        { format!("{}{}{}", shift_modifier(), modifier(), key) }
+        {
+            format!("{}{}{}", shift_modifier(), modifier(), key)
+        }
         #[cfg(not(target_os = "macos"))]
-        { format!("{}{}{}",  modifier(), shift_modifier(), key) }
+        {
+            format!("{}{}{}", modifier(), shift_modifier(), key)
+        }
     }
 
     /// Format just a key without modifier (e.g., "F5")
@@ -263,8 +313,8 @@ mod shortcuts {
     }
 }
 
-use crate::annotations::ui::{AnnotationPopup, AnnotationAction};
-use crate::app::file_browser::{FileBrowserPanel, rfd_open_folder};
+use crate::annotations::ui::{AnnotationAction, AnnotationPopup};
+use crate::app::file_browser::{rfd_open_folder, FileBrowserPanel};
 use crate::config::Config;
 use crate::markdown::renderer::MarkdownRenderer;
 use crate::theme::style::{create_style, palette};
@@ -317,11 +367,7 @@ pub struct MdViewApp {
 }
 
 impl MdViewApp {
-    pub fn new(
-        cc: &eframe::CreationContext<'_>,
-        file: Option<PathBuf>,
-        config: Config,
-    ) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, file: Option<PathBuf>, config: Config) -> Self {
         // Apply our refined style
         let style = create_style(&config.general.theme, &config);
         cc.egui_ctx.set_style(style);
@@ -442,7 +488,8 @@ impl MdViewApp {
     fn open_folder_dialog(&mut self) {
         if let Some(path) = rfd_open_folder() {
             if let Err(e) = self.state.open_folder(path) {
-                self.state.set_status(friendly_errors::format_folder_error(&e));
+                self.state
+                    .set_status(friendly_errors::format_folder_error(&e));
             } else {
                 self.file_browser_visible = true;
                 self.state.set_status("Folder opened");
@@ -453,9 +500,9 @@ impl MdViewApp {
     /// Render the file association dialog
     fn render_file_association_dialog(&mut self, ctx: &egui::Context) {
         // Cache the default handler check to avoid spawning processes every frame
-        let is_already_default = self.cached_is_default_handler.get_or_insert_with(|| {
-            crate::file_association::is_default_handler()
-        });
+        let is_already_default = self
+            .cached_is_default_handler
+            .get_or_insert_with(crate::file_association::is_default_handler);
         let is_already_default = *is_already_default;
 
         let mut should_close = false;
@@ -509,13 +556,16 @@ impl MdViewApp {
             match register_as_default() {
                 AssociationResult::Success => {
                     self.state.config.general.file_association_enabled = true;
-                    self.state.set_status("Successfully set as default markdown viewer");
+                    self.state
+                        .set_status("Successfully set as default markdown viewer");
                 }
                 AssociationResult::Failed(msg) => {
-                    self.state.set_status(format!("Could not set as default: {}", msg));
+                    self.state
+                        .set_status(format!("Could not set as default: {}", msg));
                 }
                 AssociationResult::NotSupported => {
-                    self.state.set_status("File association not supported on this platform");
+                    self.state
+                        .set_status("File association not supported on this platform");
                 }
             }
         }
@@ -526,9 +576,11 @@ impl MdViewApp {
 
             // Save the config
             if let Some(config_path) = crate::config::loader::get_default_config_path() {
-                if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
+                if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path)
+                {
                     log::warn!("Failed to save config: {}", e);
-                    self.state.set_status(format!("Failed to save config: {}", e));
+                    self.state
+                        .set_status(format!("Failed to save config: {}", e));
                 }
             }
         }
@@ -558,7 +610,7 @@ impl MdViewApp {
                         "A new version of mdview is available: v{}",
                         update_info.version
                     ))
-                    .strong()
+                    .strong(),
                 );
 
                 ui.add_space(4.0);
@@ -613,7 +665,8 @@ impl MdViewApp {
 
         if should_open_url {
             if let Err(e) = open::that(&update_info.url) {
-                self.state.set_status(format!("Could not open browser: {}", e));
+                self.state
+                    .set_status(format!("Could not open browser: {}", e));
             }
         }
 
@@ -624,9 +677,11 @@ impl MdViewApp {
 
             // Save config
             if let Some(config_path) = crate::config::loader::get_default_config_path() {
-                if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path) {
+                if let Err(e) = crate::config::loader::save_config(&self.state.config, &config_path)
+                {
                     log::warn!("Failed to save config: {}", e);
-                    self.state.set_status(format!("Failed to save config: {}", e));
+                    self.state
+                        .set_status(format!("Failed to save config: {}", e));
                 }
             }
         }
@@ -657,7 +712,7 @@ impl MdViewApp {
                         egui::RichText::new("mdview")
                             .size(24.0)
                             .strong()
-                            .color(palette::TEXT_PRIMARY)
+                            .color(palette::TEXT_PRIMARY),
                     );
 
                     ui.add_space(4.0);
@@ -666,7 +721,7 @@ impl MdViewApp {
                     ui.label(
                         egui::RichText::new(format!("Version {}", crate::update::CURRENT_VERSION))
                             .size(14.0)
-                            .color(palette::TEXT_SECONDARY)
+                            .color(palette::TEXT_SECONDARY),
                     );
 
                     ui.add_space(16.0);
@@ -675,7 +730,7 @@ impl MdViewApp {
                     ui.label(
                         egui::RichText::new("A fast, cross-platform markdown viewer")
                             .size(13.0)
-                            .color(palette::TEXT_MUTED)
+                            .color(palette::TEXT_MUTED),
                     );
 
                     ui.add_space(8.0);
@@ -683,7 +738,7 @@ impl MdViewApp {
                     ui.label(
                         egui::RichText::new("Built with Rust and egui")
                             .size(12.0)
-                            .color(palette::TEXT_DISABLED)
+                            .color(palette::TEXT_DISABLED),
                     );
 
                     ui.add_space(16.0);
@@ -713,16 +768,14 @@ impl MdViewApp {
         if should_open_repo {
             if let Err(e) = open::that(REPOSITORY_URL) {
                 log::error!("Failed to open repository URL: {}", e);
-                self.state
-                    .set_status(format!("Could not open link: {}", e));
+                self.state.set_status(format!("Could not open link: {}", e));
             }
         }
 
         if should_open_issues {
             if let Err(e) = open::that(&issue_url) {
                 log::error!("Failed to open issues URL: {}", e);
-                self.state
-                    .set_status(format!("Could not open link: {}", e));
+                self.state.set_status(format!("Could not open link: {}", e));
             }
         }
 
@@ -811,16 +864,14 @@ impl MdViewApp {
         if should_open_repo {
             if let Err(e) = open::that(REPOSITORY_URL) {
                 log::error!("Failed to open repository URL: {}", e);
-                self.state
-                    .set_status(format!("Could not open link: {}", e));
+                self.state.set_status(format!("Could not open link: {}", e));
             }
         }
 
         if should_open_issues {
             if let Err(e) = open::that(&issue_url) {
                 log::error!("Failed to open issues URL: {}", e);
-                self.state
-                    .set_status(format!("Could not open link: {}", e));
+                self.state.set_status(format!("Could not open link: {}", e));
             }
         }
 
@@ -849,8 +900,9 @@ impl MdViewApp {
                     self.open_folder_dialog();
                 }
                 MenuAction::Reload => {
-                    if let Err(e) = self.state.reload_file() {
-                        self.state.set_status(friendly_errors::format_reload_error(&e));
+                    if let Err(e) = self.reload_current_file() {
+                        self.state
+                            .set_status(friendly_errors::format_reload_error(&e));
                     }
                 }
                 MenuAction::Close => {
@@ -868,22 +920,25 @@ impl MdViewApp {
                         }
                     }
                 }
-                MenuAction::EditConfig => {
-                    match crate::config::loader::create_default_config() {
-                        Ok(config_path) => {
-                            if let Err(e) = open::that(&config_path) {
-                                log::error!("Failed to open config file: {}", e);
-                                self.state.set_status(friendly_errors::format_config_error("open", &e));
-                            } else {
-                                self.state.set_status(format!("Config file opened: {}", config_path.display()));
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Failed to create config file: {}", e);
-                            self.state.set_status(friendly_errors::format_config_error("create", &e));
+                MenuAction::EditConfig => match crate::config::loader::create_default_config() {
+                    Ok(config_path) => {
+                        if let Err(e) = open::that(&config_path) {
+                            log::error!("Failed to open config file: {}", e);
+                            self.state
+                                .set_status(friendly_errors::format_config_error("open", &e));
+                        } else {
+                            self.state.set_status(format!(
+                                "Config file opened: {}",
+                                config_path.display()
+                            ));
                         }
                     }
-                }
+                    Err(e) => {
+                        log::error!("Failed to create config file: {}", e);
+                        self.state
+                            .set_status(friendly_errors::format_config_error("create", &e));
+                    }
+                },
                 MenuAction::Quit => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -918,7 +973,8 @@ impl MdViewApp {
                         None => "Full Width".to_string(),
                         Some(w) => format!("{}px", w as i32),
                     };
-                    self.state.set_status(format!("Reading width: {}", width_desc));
+                    self.state
+                        .set_status(format!("Reading width: {}", width_desc));
                     self.save_config_debounced(ctx);
                 }
             }
@@ -932,7 +988,9 @@ impl MdViewApp {
     fn sync_native_menu_state(&self) {
         if let Some(ref menu) = self.native_menu {
             let has_file = self.state.current_file.is_some();
-            let file_name = self.state.current_file
+            let file_name = self
+                .state
+                .current_file
                 .as_ref()
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str());
@@ -978,7 +1036,11 @@ impl MdViewApp {
             return None;
         }
 
-        let (raw_start, raw_end) = if start <= end { (start, end) } else { (end, start) };
+        let (raw_start, raw_end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
         let normalized_start = self.floor_content_boundary(raw_start)?;
         let normalized_end = self.ceil_content_boundary(raw_end)?;
         if normalized_end > normalized_start {
@@ -1029,9 +1091,7 @@ impl MdViewApp {
             (Some((start, end)), Some(offset)) if offset >= start && offset < end => {
                 Some((start, end))
             }
-            (_, Some(offset)) => {
-                self.normalize_selection_range(offset, offset.saturating_add(1))
-            }
+            (_, Some(offset)) => self.normalize_selection_range(offset, offset.saturating_add(1)),
             (Some((start, end)), None) => Some((start, end)),
             (None, None) => None,
         };
@@ -1066,7 +1126,8 @@ impl MdViewApp {
         self.watcher = setup_file_watcher(&mut self.state, ctx.clone(), path.clone());
         self.watched_file = Some(path);
         if self.watcher.is_none() {
-            self.state.set_status("Hot reload unavailable for this file");
+            self.state
+                .set_status("Hot reload unavailable for this file");
         }
     }
 
@@ -1113,8 +1174,10 @@ impl MdViewApp {
         self.state.config.theme.fonts.size = new_size;
         let style = create_style(self.state.current_theme(), &self.state.config);
         ctx.set_style(style);
-        self.state
-            .set_status(format!("Zoom: {}px", self.state.config.theme.fonts.size as i32));
+        self.state.set_status(format!(
+            "Zoom: {}px",
+            self.state.config.theme.fonts.size as i32
+        ));
         self.save_config_debounced(ctx);
         true
     }
@@ -1154,13 +1217,28 @@ impl MdViewApp {
         let kb = &self.cached_keybindings;
 
         // Batch all keyboard input checks into a single ctx.input() call for efficiency
-        let (toggle_toc, export_pdf, reload, open_file, open_folder, toggle_file_browser, quit, add_annotation, add_bookmark, focus_toc_search, zoom_in, zoom_out, zoom_reset, escape) = ctx.input(|i| {
+        let (
+            toggle_toc,
+            export_pdf,
+            reload,
+            open_file,
+            open_folder,
+            toggle_file_browser,
+            quit,
+            add_annotation,
+            add_bookmark,
+            focus_toc_search,
+            zoom_in,
+            zoom_out,
+            zoom_reset,
+            escape,
+        ) = ctx.input(|i| {
             let check = |parsed: &Option<ParsedKeybinding>| -> bool {
                 parsed.as_ref().is_some_and(|p| {
-                    i.key_pressed(p.key) &&
-                    i.modifiers.command == p.modifiers.command &&
-                    i.modifiers.alt == p.modifiers.alt &&
-                    i.modifiers.shift == p.modifiers.shift
+                    i.key_pressed(p.key)
+                        && i.modifiers.command == p.modifiers.command
+                        && i.modifiers.alt == p.modifiers.alt
+                        && i.modifiers.shift == p.modifiers.shift
                 })
             };
             (
@@ -1184,7 +1262,11 @@ impl MdViewApp {
         if toggle_toc {
             self.state.toggle_toc();
             let visible = self.state.toc_visible();
-            self.state.set_status(if visible { "Contents shown" } else { "Contents hidden" });
+            self.state.set_status(if visible {
+                "Contents shown"
+            } else {
+                "Contents hidden"
+            });
         }
 
         if export_pdf {
@@ -1198,8 +1280,9 @@ impl MdViewApp {
         if reload {
             if self.state.file_deleted {
                 self.state.set_status("Cannot reload: the file was deleted");
-            } else if let Err(e) = self.state.reload_file() {
-                self.state.set_status(friendly_errors::format_reload_error(&e));
+            } else if let Err(e) = self.reload_current_file() {
+                self.state
+                    .set_status(friendly_errors::format_reload_error(&e));
             } else {
                 self.state.set_status("File reloaded");
             }
@@ -1216,7 +1299,11 @@ impl MdViewApp {
         if toggle_file_browser {
             if self.state.folder_state.is_open() {
                 self.file_browser_visible = !self.file_browser_visible;
-                self.state.set_status(if self.file_browser_visible { "File browser shown" } else { "File browser hidden" });
+                self.state.set_status(if self.file_browser_visible {
+                    "File browser shown"
+                } else {
+                    "File browser hidden"
+                });
             } else {
                 self.open_folder_dialog();
             }
@@ -1233,11 +1320,9 @@ impl MdViewApp {
                 .and_then(|(start, end)| self.normalize_selection_range(start, end))
                 .or_else(|| {
                     ctx.input(|i| i.pointer.hover_pos()).and_then(|pos| {
-                        self.renderer
-                            .hit_test_char_offset(pos)
-                            .and_then(|offset| {
-                                self.normalize_selection_range(offset, offset.saturating_add(1))
-                            })
+                        self.renderer.hit_test_char_offset(pos).and_then(|offset| {
+                            self.normalize_selection_range(offset, offset.saturating_add(1))
+                        })
                     })
                 });
 
@@ -1321,8 +1406,9 @@ impl MdViewApp {
                     }
                     // Only reload once per frame even if multiple Modified events queued
                     if !reloaded {
-                        if let Err(e) = self.state.reload_file() {
-                            self.state.set_status(friendly_errors::format_reload_error(&e));
+                        if let Err(e) = self.reload_current_file() {
+                            self.state
+                                .set_status(friendly_errors::format_reload_error(&e));
                         } else {
                             self.state.set_status("File updated");
                         }
@@ -1347,22 +1433,40 @@ impl MdViewApp {
     fn export_pdf(&mut self) {
         if let Some(file_path) = &self.state.current_file {
             let pdf_path = file_path.with_extension("pdf");
-            let events: Vec<_> = crate::markdown::parser::parse_with_config(&self.state.content, &self.state.config).collect();
+            let events: Vec<_> =
+                crate::markdown::parser::parse_with_config(&self.state.content, &self.state.config)
+                    .collect();
 
             // Get the base path for resolving relative image paths
             let base_path = file_path.parent();
 
-            match crate::export::pdf::export_to_pdf_with_base(&events, &pdf_path, &self.state.config, base_path) {
+            match crate::export::pdf::export_to_pdf_with_base(
+                &events,
+                &pdf_path,
+                &self.state.config,
+                base_path,
+            ) {
                 Ok(()) => {
-                    self.state.set_status(format!("PDF saved to {}", pdf_path.display()));
+                    self.state
+                        .set_status(format!("PDF saved to {}", pdf_path.display()));
                 }
                 Err(e) => {
-                    self.state.set_status(friendly_errors::format_export_error(&e));
+                    self.state
+                        .set_status(friendly_errors::format_export_error(&e));
                 }
             }
         } else {
             self.state.set_status("Open a file first to export as PDF");
         }
+    }
+
+    fn reload_current_file(&mut self) -> Result<(), std::io::Error> {
+        if let Some(path) = self.state.current_file.clone() {
+            let base_path = path.parent().map(|p| p.to_path_buf());
+            self.renderer.set_base_path(base_path);
+            self.renderer.clear_image_cache();
+        }
+        self.state.reload_file()
     }
 
     fn open_file_dialog(&mut self) {
@@ -1416,7 +1520,8 @@ impl MdViewApp {
 
                 // Call plugin hook
                 #[cfg(feature = "plugins")]
-                self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnAnnotationAdd);
+                self.state
+                    .call_plugin_hook(crate::plugin::api::PluginHook::AnnotationAdd);
             }
             AnnotationAction::CreateNote(start, end, text) => {
                 let annotation = Annotation::note(start, end, &text);
@@ -1428,7 +1533,8 @@ impl MdViewApp {
                 }
 
                 #[cfg(feature = "plugins")]
-                self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnAnnotationAdd);
+                self.state
+                    .call_plugin_hook(crate::plugin::api::PluginHook::AnnotationAdd);
             }
             AnnotationAction::CreateBookmark(position) => {
                 let annotation = Annotation::bookmark(position);
@@ -1440,7 +1546,8 @@ impl MdViewApp {
                 }
 
                 #[cfg(feature = "plugins")]
-                self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnAnnotationAdd);
+                self.state
+                    .call_plugin_hook(crate::plugin::api::PluginHook::AnnotationAdd);
             }
             AnnotationAction::Delete(id) => {
                 self.state.annotations.remove(&id);
@@ -1451,7 +1558,8 @@ impl MdViewApp {
                 }
 
                 #[cfg(feature = "plugins")]
-                self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnAnnotationRemove);
+                self.state
+                    .call_plugin_hook(crate::plugin::api::PluginHook::AnnotationRemove);
             }
             AnnotationAction::UpdateNote(id, text) => {
                 if let Some(ann) = self.state.annotations.get_mut(&id) {
@@ -1540,7 +1648,8 @@ impl MdViewApp {
         if requested_at.elapsed() >= Duration::from_millis(ANNOTATION_SAVE_DEBOUNCE_MS) {
             if let Err(e) = self.state.save_annotations() {
                 log::error!("Failed to auto-save annotations: {}", e);
-                self.state.set_status("Could not save annotations. Check file permissions.");
+                self.state
+                    .set_status("Could not save annotations. Check file permissions.");
             }
             self.annotation_save_requested_at = None;
         }
@@ -1554,28 +1663,47 @@ impl MdViewApp {
         let folder_is_open = self.state.folder_state.is_open();
         let toc_visible = self.state.toc_visible();
         let file_browser_visible = self.file_browser_visible;
-        let current_file_name = self.state.current_file
+        let current_file_name = self
+            .state
+            .current_file
             .as_ref()
             .and_then(|f| f.file_name())
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
 
         let is_dark = ctx.style().visuals.dark_mode;
-        let menu_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
+        let menu_bg = if is_dark {
+            palette::BG_DARK
+        } else {
+            palette::light::BG_SIDEBAR
+        };
 
         egui::TopBottomPanel::top("menu_bar")
-            .frame(egui::Frame::none()
-                .fill(menu_bg)
-                .inner_margin(egui::Margin::symmetric(12.0, 6.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(menu_bg)
+                    .inner_margin(egui::Margin::symmetric(12.0, 6.0)),
+            )
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
                     Self::render_file_menu(ui, recent_files.as_slice(), &mut actions);
-                    Self::render_view_menu(ui, &current_theme, folder_is_open, toc_visible, file_browser_visible, self.state.config.layout.content_width, &mut actions);
+                    Self::render_view_menu(
+                        ui,
+                        &current_theme,
+                        folder_is_open,
+                        toc_visible,
+                        file_browser_visible,
+                        self.state.config.layout.content_width,
+                        &mut actions,
+                    );
 
                     // Plugins menu (only if plugins feature enabled and items registered)
                     #[cfg(feature = "plugins")]
                     {
-                        let plugin_items = self.state.plugin_runtime.as_ref()
+                        let plugin_items = self
+                            .state
+                            .plugin_runtime
+                            .as_ref()
                             .and_then(|rt| rt.state.lock().ok())
                             .map(|state| state.menu_items.clone())
                             .unwrap_or_default();
@@ -1616,7 +1744,11 @@ impl MdViewApp {
                     ui.label(egui::RichText::new("No recent files").italics().weak());
                 } else {
                     for (path, name, _dir) in recent_files {
-                        if ui.button(name).on_hover_text(path.display().to_string()).clicked() {
+                        if ui
+                            .button(name)
+                            .on_hover_text(path.display().to_string())
+                            .clicked()
+                        {
                             actions.file_to_open = Some(path.clone());
                             ui.close_menu();
                         }
@@ -1706,7 +1838,10 @@ impl MdViewApp {
                     actions.new_reading_width = Some(None);
                     ui.close_menu();
                 }
-                if ui.selectable_label(is_comfortable, "Comfortable (720px)").clicked() {
+                if ui
+                    .selectable_label(is_comfortable, "Comfortable (720px)")
+                    .clicked()
+                {
                     actions.new_reading_width = Some(Some(720.0));
                     ui.close_menu();
                 }
@@ -1769,11 +1904,7 @@ impl MdViewApp {
     fn render_menu_file_name(ui: &mut egui::Ui, file_name: Option<&str>) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(name) = file_name {
-                ui.label(
-                    egui::RichText::new(name)
-                        .color(palette::TEXT_MUTED)
-                        .small()
-                );
+                ui.label(egui::RichText::new(name).color(palette::TEXT_MUTED).small());
             }
         });
     }
@@ -1788,8 +1919,9 @@ impl MdViewApp {
         if actions.reload {
             if self.state.file_deleted {
                 self.state.set_status("Cannot reload: the file was deleted");
-            } else if let Err(e) = self.state.reload_file() {
-                self.state.set_status(friendly_errors::format_reload_error(&e));
+            } else if let Err(e) = self.reload_current_file() {
+                self.state
+                    .set_status(friendly_errors::format_reload_error(&e));
             } else {
                 self.state.set_status("File reloaded");
             }
@@ -1838,7 +1970,8 @@ impl MdViewApp {
                 None => "Full Width".to_string(),
                 Some(w) => format!("{}px", w as i32),
             };
-            self.state.set_status(format!("Reading width: {}", width_desc));
+            self.state
+                .set_status(format!("Reading width: {}", width_desc));
             self.save_config_debounced(ctx);
         }
         if actions.edit_config {
@@ -1858,7 +1991,11 @@ impl MdViewApp {
         if let Some(ref runtime) = self.state.plugin_runtime {
             // Call the callback function in Lua globals
             if let Err(e) = runtime.lua().load(format!("{}()", callback_name)).exec() {
-                log::error!("[plugin] Failed to invoke callback '{}': {}", callback_name, e);
+                log::error!(
+                    "[plugin] Failed to invoke callback '{}': {}",
+                    callback_name,
+                    e
+                );
                 self.state.set_status(format!("Plugin error: {}", e));
             }
         }
@@ -1869,14 +2006,17 @@ impl MdViewApp {
             Ok(config_path) => {
                 if let Err(e) = open::that(&config_path) {
                     log::error!("Failed to open config file: {}", e);
-                    self.state.set_status(friendly_errors::format_config_error("open", &e));
+                    self.state
+                        .set_status(friendly_errors::format_config_error("open", &e));
                 } else {
-                    self.state.set_status(format!("Config file opened: {}", config_path.display()));
+                    self.state
+                        .set_status(format!("Config file opened: {}", config_path.display()));
                 }
             }
             Err(e) => {
                 log::error!("Failed to create config file: {}", e);
-                self.state.set_status(friendly_errors::format_config_error("create", &e));
+                self.state
+                    .set_status(friendly_errors::format_config_error("create", &e));
             }
         }
     }
@@ -1885,35 +2025,49 @@ impl MdViewApp {
         self.state.clear_expired_status();
 
         let is_dark = ctx.style().visuals.dark_mode;
-        let status_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
-        let border_color = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
-        let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
-        let accent = if is_dark { palette::ACCENT } else { palette::light::ACCENT };
+        let status_bg = if is_dark {
+            palette::BG_DARK
+        } else {
+            palette::light::BG_SIDEBAR
+        };
+        let border_color = if is_dark {
+            palette::BORDER_SUBTLE
+        } else {
+            palette::light::BORDER_SUBTLE
+        };
+        let text_muted = if is_dark {
+            palette::TEXT_MUTED
+        } else {
+            palette::light::TEXT_MUTED
+        };
+        let accent = if is_dark {
+            palette::ACCENT
+        } else {
+            palette::light::ACCENT
+        };
 
         egui::TopBottomPanel::bottom("status_bar")
-            .frame(egui::Frame::none()
-                .fill(status_bg)
-                .inner_margin(egui::Margin::symmetric(16.0, 6.0))
-                .stroke(Stroke::new(1.0, border_color)))
+            .frame(
+                egui::Frame::none()
+                    .fill(status_bg)
+                    .inner_margin(egui::Margin::symmetric(16.0, 6.0))
+                    .stroke(Stroke::new(1.0, border_color)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if let Some((msg, _)) = &self.state.status_message {
-                        ui.label(
-                            egui::RichText::new(msg)
-                                .color(accent)
-                                .small()
-                        );
+                        ui.label(egui::RichText::new(msg).color(accent).small());
                     } else if let Some(display) = &self.state.cached_file_display {
-                        ui.label(
-                            egui::RichText::new(display)
-                                .color(text_muted)
-                                .small()
-                        );
+                        ui.label(egui::RichText::new(display).color(text_muted).small());
                     } else {
                         ui.label(
                             egui::RichText::new("No file open")
-                                .color(if is_dark { palette::TEXT_DISABLED } else { palette::light::TEXT_MUTED })
-                                .small()
+                                .color(if is_dark {
+                                    palette::TEXT_DISABLED
+                                } else {
+                                    palette::light::TEXT_MUTED
+                                })
+                                .small(),
                         );
                     }
 
@@ -1921,15 +2075,11 @@ impl MdViewApp {
                         if self.state.config.general.hot_reload && self.watcher.is_some() {
                             // Watching indicator with subtle dot
                             ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("●")
-                                        .color(palette::SUCCESS)
-                                        .small()
-                                );
+                                ui.label(egui::RichText::new("●").color(palette::SUCCESS).small());
                                 ui.label(
                                     egui::RichText::new("Watching")
                                         .color(palette::TEXT_MUTED)
-                                        .small()
+                                        .small(),
                                 );
                             });
                         }
@@ -1956,9 +2106,21 @@ impl MdViewApp {
         }
 
         let is_dark = ctx.style().visuals.dark_mode;
-        let panel_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
-        let border_color = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
-        let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+        let panel_bg = if is_dark {
+            palette::BG_DARK
+        } else {
+            palette::light::BG_SIDEBAR
+        };
+        let border_color = if is_dark {
+            palette::BORDER_SUBTLE
+        } else {
+            palette::light::BORDER_SUBTLE
+        };
+        let text_muted = if is_dark {
+            palette::TEXT_MUTED
+        } else {
+            palette::light::TEXT_MUTED
+        };
 
         // Keep configured width within supported bounds.
         let target_width = self.state.toc_width.clamp(TOC_MIN_WIDTH, TOC_MAX_WIDTH);
@@ -1976,7 +2138,11 @@ impl MdViewApp {
 
         let mut panel = egui::SidePanel::left("toc_panel")
             .resizable(fully_open)
-            .default_width(if fully_open { target_width } else { animated_width });
+            .default_width(if fully_open {
+                target_width
+            } else {
+                animated_width
+            });
 
         if fully_open {
             panel = panel.width_range(TOC_MIN_WIDTH..=TOC_MAX_WIDTH);
@@ -1986,10 +2152,12 @@ impl MdViewApp {
         }
 
         let panel_response = panel
-            .frame(egui::Frame::none()
-                .fill(panel_bg)
-                .inner_margin(egui::Margin::same(0.0))
-                .stroke(Stroke::new(1.0, border_color)))
+            .frame(
+                egui::Frame::none()
+                    .fill(panel_bg)
+                    .inner_margin(egui::Margin::same(0.0))
+                    .stroke(Stroke::new(1.0, border_color)),
+            )
             .show(ctx, |ui| {
                 // Clip contents during animation to prevent overflow
                 ui.set_clip_rect(ui.available_rect_before_wrap());
@@ -2002,31 +2170,41 @@ impl MdViewApp {
                         egui::RichText::new("CONTENTS")
                             .color(text_muted)
                             .small()
-                            .strong()
+                            .strong(),
                     );
                 });
                 ui.add_space(8.0);
 
                 // TOC entries (only interactive when fully open)
                 if fully_open {
-                    if let Some(scroll_to) =
-                        self.toc_panel
-                            .render(ui, &self.state.toc, self.state.current_heading_idx, is_dark)
-                    {
+                    if let Some(scroll_to) = self.toc_panel.render(
+                        ui,
+                        &self.state.toc,
+                        self.state.current_heading_idx,
+                        is_dark,
+                    ) {
                         // Set the target heading to scroll to
                         self.state.scroll_to_heading = Some(scroll_to);
                     }
                 } else {
                     // During animation, render entries non-interactively for visual continuity
                     ui.disable();
-                    self.toc_panel
-                        .render(ui, &self.state.toc, self.state.current_heading_idx, is_dark);
+                    self.toc_panel.render(
+                        ui,
+                        &self.state.toc,
+                        self.state.current_heading_idx,
+                        is_dark,
+                    );
                 }
             });
 
         // Persist the actual width after user resize so it doesn't jump back.
         if fully_open {
-            let actual_width = panel_response.response.rect.width().clamp(TOC_MIN_WIDTH, TOC_MAX_WIDTH);
+            let actual_width = panel_response
+                .response
+                .rect
+                .width()
+                .clamp(TOC_MIN_WIDTH, TOC_MAX_WIDTH);
             if (actual_width - self.state.toc_width).abs() > 0.5 {
                 self.state.toc_width = actual_width;
                 self.state.config.general.toc_width = actual_width.round() as u32;
@@ -2041,9 +2219,21 @@ impl MdViewApp {
         }
 
         let is_dark = ctx.style().visuals.dark_mode;
-        let panel_bg = if is_dark { palette::BG_DARK } else { palette::light::BG_SIDEBAR };
-        let border_color = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
-        let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+        let panel_bg = if is_dark {
+            palette::BG_DARK
+        } else {
+            palette::light::BG_SIDEBAR
+        };
+        let border_color = if is_dark {
+            palette::BORDER_SUBTLE
+        } else {
+            palette::light::BORDER_SUBTLE
+        };
+        let text_muted = if is_dark {
+            palette::TEXT_MUTED
+        } else {
+            palette::light::TEXT_MUTED
+        };
 
         let mut file_to_open: Option<PathBuf> = None;
 
@@ -2051,10 +2241,12 @@ impl MdViewApp {
             .resizable(true)
             .default_width(250.0)
             .width_range(180.0..=400.0)
-            .frame(egui::Frame::none()
-                .fill(panel_bg)
-                .inner_margin(egui::Margin::same(8.0))
-                .stroke(Stroke::new(1.0, border_color)))
+            .frame(
+                egui::Frame::none()
+                    .fill(panel_bg)
+                    .inner_margin(egui::Margin::same(8.0))
+                    .stroke(Stroke::new(1.0, border_color)),
+            )
             .show(ctx, |ui| {
                 // Header
                 ui.add_space(8.0);
@@ -2063,14 +2255,17 @@ impl MdViewApp {
                         egui::RichText::new("FILES")
                             .color(text_muted)
                             .small()
-                            .strong()
+                            .strong(),
                     );
                 });
                 ui.add_space(8.0);
 
                 // File browser
                 let current_file = self.state.current_file.as_deref();
-                if let Some(path) = self.file_browser.render(ui, &mut self.state.folder_state, current_file) {
+                if let Some(path) =
+                    self.file_browser
+                        .render(ui, &mut self.state.folder_state, current_file)
+                {
                     file_to_open = Some(path);
                 }
             });
@@ -2083,14 +2278,20 @@ impl MdViewApp {
 
     fn render_main_content(&mut self, ctx: &egui::Context) {
         let is_dark = ctx.style().visuals.dark_mode;
-        let main_bg = if is_dark { palette::BG_BASE } else { palette::light::BG_BASE };
+        let main_bg = if is_dark {
+            palette::BG_BASE
+        } else {
+            palette::light::BG_BASE
+        };
 
         let mut file_to_open: Option<PathBuf> = None;
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none()
-                .fill(main_bg)
-                .inner_margin(egui::Margin::same(0.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(main_bg)
+                    .inner_margin(egui::Margin::same(0.0)),
+            )
             .show(ctx, |ui| {
                 // Show drag-drop overlay if dragging
                 if self.is_dragging_file {
@@ -2133,7 +2334,8 @@ impl MdViewApp {
 
                 // Call pre-render hook
                 #[cfg(feature = "plugins")]
-                self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnPreRender);
+                self.state
+                    .call_plugin_hook(crate::plugin::api::PluginHook::PreRender);
 
                 // Reuse heading_positions Vec instead of allocating new one per frame
                 let mut heading_positions = std::mem::take(&mut self.state.heading_positions);
@@ -2175,8 +2377,9 @@ impl MdViewApp {
                     // Estimate visible range based on scroll position ratio
                     let content_len = self.state.content.len();
                     if content_len > 0 {
-                        let max_scroll = (scroll_output.content_size.y - scroll_output.inner_rect.height())
-                            .max(1.0);
+                        let max_scroll = (scroll_output.content_size.y
+                            - scroll_output.inner_rect.height())
+                        .max(1.0);
                         let ratio = (scroll_offset / max_scroll).clamp(0.0, 1.0);
                         let start = (ratio * content_len as f32) as usize;
                         let visible_fraction = if scroll_output.content_size.y > 0.0 {
@@ -2185,7 +2388,8 @@ impl MdViewApp {
                         } else {
                             0.1
                         };
-                        let visible_chars = ((content_len as f32) * visible_fraction).ceil() as usize;
+                        let visible_chars =
+                            ((content_len as f32) * visible_fraction).ceil() as usize;
                         let end = (start + visible_chars.max(1)).min(content_len);
                         self.state.visible_char_range = Some((start, end));
                     }
@@ -2200,14 +2404,22 @@ impl MdViewApp {
                     None
                 } else {
                     // partition_point returns the index where all elements before satisfy the predicate
-                    let idx = self.state.heading_positions.partition_point(|&pos| pos <= target);
-                    if idx > 0 { Some(idx - 1) } else { None }
+                    let idx = self
+                        .state
+                        .heading_positions
+                        .partition_point(|&pos| pos <= target);
+                    if idx > 0 {
+                        Some(idx - 1)
+                    } else {
+                        None
+                    }
                 };
                 self.state.current_heading_idx = current_idx;
 
                 // Call post-render hook
                 #[cfg(feature = "plugins")]
-                self.state.call_plugin_hook(crate::plugin::api::PluginHook::OnPostRender);
+                self.state
+                    .call_plugin_hook(crate::plugin::api::PluginHook::PostRender);
             });
 
         if let Some(path) = file_to_open {
@@ -2218,7 +2430,11 @@ impl MdViewApp {
 
 /// Render a loading indicator (spinner)
 fn render_loading_indicator(ui: &mut egui::Ui, is_dark: bool) {
-    let text_color = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
+    let text_color = if is_dark {
+        palette::TEXT_PRIMARY
+    } else {
+        palette::light::TEXT_PRIMARY
+    };
     let accent_color = if is_dark {
         egui::Color32::from_rgb(78, 201, 176)
     } else {
@@ -2266,7 +2482,11 @@ fn render_drag_drop_overlay(ui: &mut egui::Ui, is_dark: bool) {
     } else {
         egui::Color32::from_rgb(0, 120, 150)
     };
-    let text_color = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
+    let text_color = if is_dark {
+        palette::TEXT_PRIMARY
+    } else {
+        palette::light::TEXT_PRIMARY
+    };
 
     let rect = ui.available_rect_before_wrap();
 
@@ -2275,7 +2495,8 @@ fn render_drag_drop_overlay(ui: &mut egui::Ui, is_dark: bool) {
 
     // Dashed border effect (using multiple lines)
     let stroke = Stroke::new(3.0, border_color);
-    ui.painter().rect_stroke(rect.shrink(20.0), Rounding::same(12.0), stroke);
+    ui.painter()
+        .rect_stroke(rect.shrink(20.0), Rounding::same(12.0), stroke);
 
     // Center text
     let center = rect.center();
@@ -2301,15 +2522,13 @@ fn render_deleted_file_banner(ui: &mut egui::Ui, is_dark: bool) {
         .inner_margin(egui::Margin::symmetric(16.0, 8.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("⚠")
-                        .size(16.0)
-                        .color(text_color)
-                );
+                ui.label(egui::RichText::new("⚠").size(16.0).color(text_color));
                 ui.add_space(8.0);
                 ui.label(
-                    egui::RichText::new("This file was deleted externally. Export and reload are disabled.")
-                        .color(text_color)
+                    egui::RichText::new(
+                        "This file was deleted externally. Export and reload are disabled.",
+                    )
+                    .color(text_color),
                 );
             });
         });
@@ -2325,10 +2544,26 @@ fn render_welcome_screen(
     let available_size = ui.available_size();
 
     // Theme-aware colors
-    let text_primary = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
-    let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
-    let bg_elevated = if is_dark { palette::BG_ELEVATED } else { palette::light::BG_ELEVATED };
-    let border_subtle = if is_dark { palette::BORDER_SUBTLE } else { palette::light::BORDER_SUBTLE };
+    let text_primary = if is_dark {
+        palette::TEXT_PRIMARY
+    } else {
+        palette::light::TEXT_PRIMARY
+    };
+    let text_muted = if is_dark {
+        palette::TEXT_MUTED
+    } else {
+        palette::light::TEXT_MUTED
+    };
+    let bg_elevated = if is_dark {
+        palette::BG_ELEVATED
+    } else {
+        palette::light::BG_ELEVATED
+    };
+    let border_subtle = if is_dark {
+        palette::BORDER_SUBTLE
+    } else {
+        palette::light::BORDER_SUBTLE
+    };
 
     ui.vertical_centered(|ui| {
         ui.add_space(available_size.y * 0.15);
@@ -2350,7 +2585,7 @@ fn render_welcome_screen(
                     egui::RichText::new("mdview")
                         .size(42.0)
                         .color(text_primary)
-                        .strong()
+                        .strong(),
                 );
             });
         });
@@ -2360,7 +2595,7 @@ fn render_welcome_screen(
         ui.label(
             egui::RichText::new("A modern markdown viewer")
                 .size(16.0)
-                .color(text_muted)
+                .color(text_muted),
         );
 
         ui.add_space(40.0);
@@ -2395,7 +2630,7 @@ fn render_welcome_screen(
                         egui::RichText::new("Recent Files")
                             .size(13.0)
                             .color(text_muted)
-                            .strong()
+                            .strong(),
                     );
 
                     ui.add_space(12.0);
@@ -2423,10 +2658,8 @@ fn render_logo_icon(ui: &mut egui::Ui) {
     painter.rect_filled(rect, Rounding::same(14.0), bg_color);
 
     // Add subtle highlight at top
-    let highlight_rect = egui::Rect::from_min_size(
-        rect.min,
-        Vec2::new(rect.width(), rect.height() * 0.4),
-    );
+    let highlight_rect =
+        egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), rect.height() * 0.4));
     painter.rect_filled(
         highlight_rect,
         Rounding::same(14.0),
@@ -2457,10 +2690,10 @@ fn render_logo_icon(ui: &mut egui::Ui) {
     // Center diamond
     let diamond_size = size * 0.18;
     let diamond_points = [
-        egui::Pos2::new(center.x, center.y - diamond_size),      // top
-        egui::Pos2::new(center.x + diamond_size, center.y),      // right
-        egui::Pos2::new(center.x, center.y + diamond_size),      // bottom
-        egui::Pos2::new(center.x - diamond_size, center.y),      // left
+        egui::Pos2::new(center.x, center.y - diamond_size), // top
+        egui::Pos2::new(center.x + diamond_size, center.y), // right
+        egui::Pos2::new(center.x, center.y + diamond_size), // bottom
+        egui::Pos2::new(center.x - diamond_size, center.y), // left
     ];
     painter.add(egui::Shape::convex_polygon(
         diamond_points.to_vec(),
@@ -2471,9 +2704,21 @@ fn render_logo_icon(ui: &mut egui::Ui) {
 
 /// Render an action hint (shortcut + description)
 fn render_action_hint(ui: &mut egui::Ui, shortcut: &str, description: &str, is_dark: bool) {
-    let bg_elevated = if is_dark { palette::BG_ELEVATED } else { palette::light::BG_ELEVATED };
-    let text_secondary = if is_dark { palette::TEXT_SECONDARY } else { palette::light::TEXT_SECONDARY };
-    let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
+    let bg_elevated = if is_dark {
+        palette::BG_ELEVATED
+    } else {
+        palette::light::BG_ELEVATED
+    };
+    let text_secondary = if is_dark {
+        palette::TEXT_SECONDARY
+    } else {
+        palette::light::TEXT_SECONDARY
+    };
+    let text_muted = if is_dark {
+        palette::TEXT_MUTED
+    } else {
+        palette::light::TEXT_MUTED
+    };
 
     ui.horizontal(|ui| {
         egui::Frame::none()
@@ -2485,25 +2730,47 @@ fn render_action_hint(ui: &mut egui::Ui, shortcut: &str, description: &str, is_d
                     egui::RichText::new(shortcut)
                         .color(text_secondary)
                         .small()
-                        .strong()
+                        .strong(),
                 );
             });
         ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(description)
-                .color(text_muted)
-        );
+        ui.label(egui::RichText::new(description).color(text_muted));
     });
 }
 
 /// Render a recent file item as a clickable row
-fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str, is_dark: bool) -> egui::Response {
+fn render_recent_file_item(
+    ui: &mut egui::Ui,
+    name: &str,
+    dir: &str,
+    is_dark: bool,
+) -> egui::Response {
     // Theme-aware colors
-    let bg_hover = if is_dark { palette::BG_HOVER } else { palette::light::BG_HOVER };
-    let text_primary = if is_dark { palette::TEXT_PRIMARY } else { palette::light::TEXT_PRIMARY };
-    let text_secondary = if is_dark { palette::TEXT_SECONDARY } else { palette::light::TEXT_SECONDARY };
-    let text_muted = if is_dark { palette::TEXT_MUTED } else { palette::light::TEXT_MUTED };
-    let text_disabled = if is_dark { palette::TEXT_DISABLED } else { palette::light::TEXT_DISABLED };
+    let bg_hover = if is_dark {
+        palette::BG_HOVER
+    } else {
+        palette::light::BG_HOVER
+    };
+    let text_primary = if is_dark {
+        palette::TEXT_PRIMARY
+    } else {
+        palette::light::TEXT_PRIMARY
+    };
+    let text_secondary = if is_dark {
+        palette::TEXT_SECONDARY
+    } else {
+        palette::light::TEXT_SECONDARY
+    };
+    let text_muted = if is_dark {
+        palette::TEXT_MUTED
+    } else {
+        palette::light::TEXT_MUTED
+    };
+    let text_disabled = if is_dark {
+        palette::TEXT_DISABLED
+    } else {
+        palette::light::TEXT_DISABLED
+    };
 
     // Truncate directory path by character count (UTF-8 safe).
     let truncated_dir = {
@@ -2521,18 +2788,13 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str, is_dark: bo
     let available_width = ui.available_width();
 
     // Allocate space for the clickable row
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(available_width, row_height),
-        egui::Sense::click(),
-    );
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(available_width, row_height), egui::Sense::click());
 
     // Draw hover background
     if response.hovered() {
-        ui.painter().rect_filled(
-            rect,
-            Rounding::same(6.0),
-            bg_hover,
-        );
+        ui.painter()
+            .rect_filled(rect, Rounding::same(6.0), bg_hover);
     }
 
     // Draw content using the painter
@@ -2545,7 +2807,11 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str, is_dark: bo
         egui::Align2::LEFT_CENTER,
         "\u{1F4C4}",
         egui::FontId::proportional(14.0),
-        if response.hovered() { text_secondary } else { text_muted },
+        if response.hovered() {
+            text_secondary
+        } else {
+            text_muted
+        },
     );
 
     // File name
@@ -2554,7 +2820,11 @@ fn render_recent_file_item(ui: &mut egui::Ui, name: &str, dir: &str, is_dark: bo
         egui::Align2::LEFT_CENTER,
         name,
         egui::FontId::proportional(14.0),
-        if response.hovered() { text_primary } else { text_secondary },
+        if response.hovered() {
+            text_primary
+        } else {
+            text_secondary
+        },
     );
 
     // Directory path
@@ -2591,13 +2861,22 @@ impl eframe::App for MdViewApp {
         // Show plugin failure notification (once)
         #[cfg(feature = "plugins")]
         if !self.shown_plugin_notification && self.state.has_failed_plugins() {
-            let names: Vec<String> = self.state.failed_plugins.iter()
+            let names: Vec<String> = self
+                .state
+                .failed_plugins
+                .iter()
                 .filter_map(|(path, _)| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
                 .collect();
             let msg = if names.len() == 1 {
-                format!("Plugin '{}' failed to load. Check logs for details.", names[0])
+                format!(
+                    "Plugin '{}' failed to load. Check logs for details.",
+                    names[0]
+                )
             } else {
-                format!("Plugins failed to load: {}. Check logs for details.", names.join(", "))
+                format!(
+                    "Plugins failed to load: {}. Check logs for details.",
+                    names.join(", ")
+                )
             };
             self.state.set_status(msg);
             self.state.clear_failed_plugins();
@@ -2639,12 +2918,14 @@ impl eframe::App for MdViewApp {
             self.is_dragging_file = false;
             if extra_dropped > 0 {
                 log::debug!("Ignoring {} additional dropped file(s)", extra_dropped);
-                self.state.set_status("Opened first file. mdview can only open one file at a time.");
+                self.state
+                    .set_status("Opened first file. mdview can only open one file at a time.");
             }
             // Check if it's a directory or file
             if path.is_dir() {
                 if let Err(e) = self.state.open_folder(path) {
-                    self.state.set_status(friendly_errors::format_folder_error(&e));
+                    self.state
+                        .set_status(friendly_errors::format_folder_error(&e));
                 } else {
                     self.file_browser_visible = true;
                     self.state.set_status("Folder opened");
@@ -2698,7 +2979,11 @@ impl eframe::App for MdViewApp {
         if self.update_checker.poll() {
             // Check if this version was dismissed
             if let Some(info) = self.update_checker.update_info() {
-                let dismissed = self.state.config.general.dismissed_update_version
+                let dismissed = self
+                    .state
+                    .config
+                    .general
+                    .dismissed_update_version
                     .as_ref()
                     .map(|v| v == &info.version)
                     .unwrap_or(false);
@@ -2735,7 +3020,8 @@ impl eframe::App for MdViewApp {
         // Call file close hook
         #[cfg(feature = "plugins")]
         if let Some(ref path) = self.state.current_file {
-            self.state.call_plugin_hook_with_path(crate::plugin::api::PluginHook::OnFileClose, path);
+            self.state
+                .call_plugin_hook_with_path(crate::plugin::api::PluginHook::FileClose, path);
         }
 
         if let Err(e) = self.state.save_annotations() {
@@ -2754,8 +3040,8 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
     let mut fonts = egui::FontDefinitions::default();
 
     // Try to load custom fonts from config directory
-    let font_dir = crate::config::loader::get_config_dir()
-        .map(|config_dir| config_dir.join("fonts"));
+    let font_dir =
+        crate::config::loader::get_config_dir().map(|config_dir| config_dir.join("fonts"));
 
     // Load body font if specified and not default
     if config.theme.fonts.body != "sans-serif" {
@@ -2769,7 +3055,9 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
                             "custom_body".to_owned(),
                             egui::FontData::from_owned(font_data),
                         );
-                        fonts.families.entry(egui::FontFamily::Proportional)
+                        fonts
+                            .families
+                            .entry(egui::FontFamily::Proportional)
                             .or_default()
                             .insert(0, "custom_body".to_owned());
                         log::info!("Loaded custom body font: {:?}", font_path);
@@ -2791,7 +3079,9 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
                             "custom_code".to_owned(),
                             egui::FontData::from_owned(font_data),
                         );
-                        fonts.families.entry(egui::FontFamily::Monospace)
+                        fonts
+                            .families
+                            .entry(egui::FontFamily::Monospace)
                             .or_default()
                             .insert(0, "custom_code".to_owned());
                         log::info!("Loaded custom code font: {:?}", font_path);
@@ -2817,12 +3107,13 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
 
         if path.exists() {
             if let Ok(font_data) = std::fs::read(&path) {
-                fonts.font_data.insert(
-                    "symbols".to_owned(),
-                    egui::FontData::from_owned(font_data),
-                );
+                fonts
+                    .font_data
+                    .insert("symbols".to_owned(), egui::FontData::from_owned(font_data));
                 // Add symbol font with highest priority for proportional text
-                fonts.families.entry(egui::FontFamily::Proportional)
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
                     .or_default()
                     .insert(0, "symbols".to_owned());
                 log::info!("Loaded symbol font: {:?}", path);
@@ -2850,12 +3141,13 @@ fn setup_fonts(ctx: &egui::Context, config: &Config) {
 
         if path.exists() {
             if let Ok(font_data) = std::fs::read(&path) {
-                fonts.font_data.insert(
-                    "emoji".to_owned(),
-                    egui::FontData::from_owned(font_data),
-                );
+                fonts
+                    .font_data
+                    .insert("emoji".to_owned(), egui::FontData::from_owned(font_data));
                 // Add emoji font with high priority for proportional text
-                fonts.families.entry(egui::FontFamily::Proportional)
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
                     .or_default()
                     .insert(0, "emoji".to_owned());
                 log::info!("Loaded emoji font: {:?}", path);
@@ -2894,38 +3186,78 @@ fn get_system_font_paths() -> SystemFontPaths {
     {
         // Symbol fonts - keyboard symbols (⌘, ⇧, ⌥) and geometric shapes (▶, ▼)
         // NOTE: These are in /System/Library/Fonts/, NOT in Supplemental/
-        paths.symbol_fonts.push("/System/Library/Fonts/Keyboard.ttf".into());
-        paths.symbol_fonts.push("/System/Library/Fonts/Apple Symbols.ttf".into());
-        paths.symbol_fonts.push("/System/Library/Fonts/Symbol.ttf".into());
-        paths.symbol_fonts.push("/System/Library/Fonts/SFNS.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/System/Library/Fonts/Keyboard.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/System/Library/Fonts/Apple Symbols.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/System/Library/Fonts/Symbol.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/System/Library/Fonts/SFNS.ttf".into());
         // User-installed Noto fonts as fallback
-        paths.symbol_fonts.push("/Library/Fonts/NotoSansSymbols2-Regular.ttf".into());
-        paths.symbol_fonts.push("/Library/Fonts/NotoSansSymbols-Regular.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/Library/Fonts/NotoSansSymbols2-Regular.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/Library/Fonts/NotoSansSymbols-Regular.ttf".into());
 
         // Emoji fonts - Note: egui renders these monochrome, not color
-        paths.emoji_fonts.push("/Library/Fonts/NotoEmoji-Regular.ttf".into());
-        paths.emoji_fonts.push("/Library/Fonts/NotoColorEmoji.ttf".into());
+        paths
+            .emoji_fonts
+            .push("/Library/Fonts/NotoEmoji-Regular.ttf".into());
+        paths
+            .emoji_fonts
+            .push("/Library/Fonts/NotoColorEmoji.ttf".into());
     }
 
     #[cfg(target_os = "linux")]
     {
         // Symbol fonts
-        paths.symbol_fonts.push("/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf".into());
-        paths.symbol_fonts.push("/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf".into());
-        paths.symbol_fonts.push("/usr/share/fonts/TTF/NotoSansSymbols2-Regular.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/usr/share/fonts/TTF/NotoSansSymbols2-Regular.ttf".into());
         // DejaVu Sans has good Unicode coverage including many symbols
-        paths.symbol_fonts.push("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
-        paths.symbol_fonts.push("/usr/share/fonts/TTF/DejaVuSans.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/usr/share/fonts/TTF/DejaVuSans.ttf".into());
         // Symbola for basic Unicode symbols
-        paths.symbol_fonts.push("/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf".into());
-        paths.symbol_fonts.push("/usr/share/fonts/TTF/Symbola.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf".into());
+        paths
+            .symbol_fonts
+            .push("/usr/share/fonts/TTF/Symbola.ttf".into());
 
         // Emoji fonts
-        paths.emoji_fonts.push("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf".into());
-        paths.emoji_fonts.push("/usr/share/fonts/noto-emoji/NotoColorEmoji.ttf".into());
-        paths.emoji_fonts.push("/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf".into());
-        paths.emoji_fonts.push("/usr/share/fonts/TTF/NotoColorEmoji.ttf".into());
-        paths.emoji_fonts.push("/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf".into());
+        paths
+            .emoji_fonts
+            .push("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf".into());
+        paths
+            .emoji_fonts
+            .push("/usr/share/fonts/noto-emoji/NotoColorEmoji.ttf".into());
+        paths
+            .emoji_fonts
+            .push("/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf".into());
+        paths
+            .emoji_fonts
+            .push("/usr/share/fonts/TTF/NotoColorEmoji.ttf".into());
+        paths
+            .emoji_fonts
+            .push("/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf".into());
     }
 
     #[cfg(target_os = "windows")]
@@ -2933,40 +3265,72 @@ fn get_system_font_paths() -> SystemFontPaths {
         // Symbol fonts - comprehensive fallback chain for Unicode symbols
         if let Ok(windir) = std::env::var("WINDIR") {
             // Segoe UI Symbol - best for keyboard symbols and geometric shapes
-            paths.symbol_fonts.push(format!("{}\\Fonts\\seguisym.ttf", windir).into());
+            paths
+                .symbol_fonts
+                .push(format!("{}\\Fonts\\seguisym.ttf", windir).into());
             // Segoe UI - general UI font with some symbol support
-            paths.symbol_fonts.push(format!("{}\\Fonts\\segoeui.ttf", windir).into());
+            paths
+                .symbol_fonts
+                .push(format!("{}\\Fonts\\segoeui.ttf", windir).into());
             // Cambria Math - mathematical and technical symbols
-            paths.symbol_fonts.push(format!("{}\\Fonts\\cambria.ttc", windir).into());
+            paths
+                .symbol_fonts
+                .push(format!("{}\\Fonts\\cambria.ttc", windir).into());
             // Arial Unicode MS - comprehensive Unicode coverage (may not be installed)
-            paths.symbol_fonts.push(format!("{}\\Fonts\\ARIALUNI.TTF", windir).into());
+            paths
+                .symbol_fonts
+                .push(format!("{}\\Fonts\\ARIALUNI.TTF", windir).into());
             // Lucida Sans Unicode - good Unicode support
-            paths.symbol_fonts.push(format!("{}\\Fonts\\l_10646.ttf", windir).into());
+            paths
+                .symbol_fonts
+                .push(format!("{}\\Fonts\\l_10646.ttf", windir).into());
             // Microsoft Sans Serif - fallback
-            paths.symbol_fonts.push(format!("{}\\Fonts\\micross.ttf", windir).into());
+            paths
+                .symbol_fonts
+                .push(format!("{}\\Fonts\\micross.ttf", windir).into());
         }
         // Hardcoded fallbacks if WINDIR not set
-        paths.symbol_fonts.push("C:\\Windows\\Fonts\\seguisym.ttf".into());
-        paths.symbol_fonts.push("C:\\Windows\\Fonts\\segoeui.ttf".into());
-        paths.symbol_fonts.push("C:\\Windows\\Fonts\\cambria.ttc".into());
+        paths
+            .symbol_fonts
+            .push("C:\\Windows\\Fonts\\seguisym.ttf".into());
+        paths
+            .symbol_fonts
+            .push("C:\\Windows\\Fonts\\segoeui.ttf".into());
+        paths
+            .symbol_fonts
+            .push("C:\\Windows\\Fonts\\cambria.ttc".into());
 
         // Emoji fonts - multiple fallbacks
         if let Ok(windir) = std::env::var("WINDIR") {
             // Segoe UI Emoji - Windows default emoji font
-            paths.emoji_fonts.push(format!("{}\\Fonts\\seguiemj.ttf", windir).into());
+            paths
+                .emoji_fonts
+                .push(format!("{}\\Fonts\\seguiemj.ttf", windir).into());
             // Segoe UI Symbol also has some emoji-like symbols
-            paths.emoji_fonts.push(format!("{}\\Fonts\\seguisym.ttf", windir).into());
+            paths
+                .emoji_fonts
+                .push(format!("{}\\Fonts\\seguisym.ttf", windir).into());
             // Noto Emoji if user has installed it
-            paths.emoji_fonts.push(format!("{}\\Fonts\\NotoEmoji-Regular.ttf", windir).into());
+            paths
+                .emoji_fonts
+                .push(format!("{}\\Fonts\\NotoEmoji-Regular.ttf", windir).into());
         }
-        paths.emoji_fonts.push("C:\\Windows\\Fonts\\seguiemj.ttf".into());
-        paths.emoji_fonts.push("C:\\Windows\\Fonts\\seguisym.ttf".into());
+        paths
+            .emoji_fonts
+            .push("C:\\Windows\\Fonts\\seguiemj.ttf".into());
+        paths
+            .emoji_fonts
+            .push("C:\\Windows\\Fonts\\seguisym.ttf".into());
     }
 
     paths
 }
 
-fn setup_file_watcher(state: &mut AppState, ctx: egui::Context, path: PathBuf) -> Option<FileWatcher> {
+fn setup_file_watcher(
+    state: &mut AppState,
+    ctx: egui::Context,
+    path: PathBuf,
+) -> Option<FileWatcher> {
     let (tx, rx) = mpsc::channel();
     state.file_event_tx = Some(tx.clone());
     state.file_event_rx = Some(rx);
@@ -2982,7 +3346,7 @@ fn setup_file_watcher(state: &mut AppState, ctx: egui::Context, path: PathBuf) -
 
 fn rfd_open_file() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("Markdown", &["md", "markdown", "mdx", "txt"])
+        .add_filter("Markdown", &["md", "markdown", "mdx"])
         .add_filter("All files", &["*"])
         .pick_file()
 }

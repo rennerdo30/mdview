@@ -32,9 +32,10 @@ pub struct CachedMarkdown {
 impl CachedMarkdown {
     /// Create a new cached markdown from content and config
     pub fn new(content: &str, config: &Config) -> Self {
-        let events: Vec<Event<'static>> = crate::markdown::parser::parse_with_config(content, config)
-            .map(|e| e.into_static())
-            .collect();
+        let events: Vec<Event<'static>> =
+            crate::markdown::parser::parse_with_config(content, config)
+                .map(|e| e.into_static())
+                .collect();
 
         Self {
             content_hash: compute_content_hash(content),
@@ -80,7 +81,7 @@ fn compute_markdown_config_hash(config: &Config) -> u64 {
 
 /// Compute content hash for tracking changes
 fn compute_content_hash(content: &str) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     hex::encode(hasher.finalize())
@@ -226,7 +227,11 @@ impl AppState {
                                     if path.extension().is_some_and(|e| e == "lua") {
                                         if let Err(e) = runtime.load_plugin(&path) {
                                             let err_msg = e.to_string();
-                                            log::error!("Failed to load plugin {:?}: {}", path, err_msg);
+                                            log::error!(
+                                                "Failed to load plugin {:?}: {}",
+                                                path,
+                                                err_msg
+                                            );
                                             failed.push((path, err_msg));
                                         } else {
                                             log::info!("Loaded plugin: {:?}", path);
@@ -306,7 +311,11 @@ impl AppState {
 
     /// Update TOC animation progress. Returns true if animation is still in progress.
     pub fn update_toc_animation(&mut self) -> bool {
-        let target = if self.config.general.show_toc { 1.0 } else { 0.0 };
+        let target = if self.config.general.show_toc {
+            1.0
+        } else {
+            0.0
+        };
 
         // Already at target
         if (self.toc_animation_progress - target).abs() < 0.001 {
@@ -343,7 +352,11 @@ impl AppState {
 
     /// Whether the TOC panel is animating (not at rest)
     pub fn toc_is_animating(&self) -> bool {
-        let target = if self.config.general.show_toc { 1.0 } else { 0.0 };
+        let target = if self.config.general.show_toc {
+            1.0
+        } else {
+            0.0
+        };
         (self.toc_animation_progress - target).abs() > 0.001
     }
 
@@ -459,7 +472,7 @@ impl AppState {
         // Call file close hook for previous file if any
         #[cfg(feature = "plugins")]
         if let Some(ref prev_path) = self.current_file {
-            self.call_plugin_hook_with_path(crate::plugin::api::PluginHook::OnFileClose, prev_path);
+            self.call_plugin_hook_with_path(crate::plugin::api::PluginHook::FileClose, prev_path);
         }
 
         let content = match std::fs::read_to_string(&path) {
@@ -492,8 +505,8 @@ impl AppState {
             log::warn!("Failed to save recent files: {}", e);
         }
 
-        let had_annotation_error = annotations.is_empty() &&
-            crate::annotations::storage::annotations_exist(&path);
+        let had_annotation_error =
+            annotations.is_empty() && crate::annotations::storage::annotations_exist(&path);
 
         self.cached_file_display = Some(path.display().to_string());
         self.current_file = Some(path.clone());
@@ -523,7 +536,7 @@ impl AppState {
 
         // Call plugin hook for file open
         #[cfg(feature = "plugins")]
-        self.call_plugin_hook_with_path(crate::plugin::api::PluginHook::OnFileOpen, &path);
+        self.call_plugin_hook_with_path(crate::plugin::api::PluginHook::FileOpen, &path);
 
         Ok(())
     }
@@ -569,7 +582,11 @@ impl AppState {
 
     /// Call a plugin hook with a file path argument
     #[cfg(feature = "plugins")]
-    pub fn call_plugin_hook_with_path(&self, hook: crate::plugin::api::PluginHook, path: &std::path::Path) {
+    pub fn call_plugin_hook_with_path(
+        &self,
+        hook: crate::plugin::api::PluginHook,
+        path: &std::path::Path,
+    ) {
         if let Some(ref runtime) = self.plugin_runtime {
             let path_str = path.to_string_lossy().to_string();
             if let Err(e) = runtime.call_hook(hook.lua_name(), path_str) {
@@ -603,7 +620,7 @@ impl AppState {
         // Call theme change hook if theme actually changed
         #[cfg(feature = "plugins")]
         if old_theme != self.config.general.theme {
-            self.call_plugin_hook(crate::plugin::api::PluginHook::OnThemeChange);
+            self.call_plugin_hook(crate::plugin::api::PluginHook::ThemeChange);
         }
 
         #[cfg(not(feature = "plugins"))]
@@ -772,14 +789,21 @@ impl AppState {
     /// This avoids rebuilding the Vec twice per frame with String allocations
     pub fn get_cached_recent_files(&mut self) -> Arc<Vec<(PathBuf, String, String)>> {
         if self.cached_recent_files.is_none() {
-            let files: Vec<_> = self.recent_files
+            let files: Vec<_> = self
+                .recent_files
                 .get_existing()
                 .iter()
-                .map(|f| (
-                    f.path.clone(),
-                    f.display_name().to_string(),
-                    f.path.parent().and_then(|p| p.to_str()).unwrap_or("").to_string(),
-                ))
+                .map(|f| {
+                    (
+                        f.path.clone(),
+                        f.display_name().to_string(),
+                        f.path
+                            .parent()
+                            .and_then(|p| p.to_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                })
                 .collect();
             self.cached_recent_files = Some(Arc::new(files));
         }

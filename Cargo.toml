@@ -17,25 +17,25 @@ notify = "7.0"
 notify-debouncer-mini = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "1.1"
 directories = "5.0"
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 printpdf = { version = "0.7", features = ["embedded_images"] }
-image = "0.25"
+image = "0.25.10"
 parking_lot = "0.12"
 log = "0.4"
-env_logger = "0.11"
+env_logger = "0.11.10"
 sha2 = "0.10"
 hex = "0.4"
-open = "5.3"
-indexmap = "2.7"
+open = "5.3.4"
+indexmap = "2.14"
 rfd = "0.15"
 ureq = "2.9"
 muda = "0.15"
 raw-window-handle = "0.6"
 
 [dependencies.syntect]
-version = "5.2"
+version = "5.3"
 optional = true
 default-features = false
 features = ["default-syntaxes", "default-themes", "regex-fancy"]

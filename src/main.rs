@@ -10,20 +10,20 @@ use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod annotations;
 mod app;
 mod config;
-mod markdown;
-mod toc;
-mod annotations;
 mod export;
-mod theme;
-mod watcher;
-mod recent;
 mod file_association;
-mod update;
+mod markdown;
 mod native_menu;
 #[cfg(feature = "plugins")]
 mod plugin;
+mod recent;
+mod theme;
+mod toc;
+mod update;
+mod watcher;
 
 pub use app::MdViewApp;
 pub use config::Config;
@@ -89,9 +89,7 @@ fn load_app_icon() -> Option<Arc<egui::IconData>> {
 }
 
 fn main() -> eframe::Result<()> {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn")
-    ).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let args = Args::parse();
 
@@ -100,8 +98,15 @@ fn main() -> eframe::Result<()> {
         match config::loader::load_from_path(config_path) {
             Ok(cfg) => cfg,
             Err(e) => {
-                log::warn!("Failed to load config from {:?}: {}. Using defaults.", config_path, e);
-                eprintln!("Warning: Could not load config file {:?}: {}", config_path, e);
+                log::warn!(
+                    "Failed to load config from {:?}: {}. Using defaults.",
+                    config_path,
+                    e
+                );
+                eprintln!(
+                    "Warning: Could not load config file {:?}: {}",
+                    config_path, e
+                );
                 Config::default()
             }
         }
@@ -216,15 +221,19 @@ fn export_pdf_and_exit(
     let content = match std::fs::read_to_string(markdown_file) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Error: Failed to read markdown file {:?}: {}", markdown_file, e);
+            eprintln!(
+                "Error: Failed to read markdown file {:?}: {}",
+                markdown_file, e
+            );
             std::process::exit(1);
         }
     };
 
-    let events: Vec<_> = markdown::parser::parse(&content).collect();
+    let events: Vec<_> = markdown::parser::parse_with_config(&content, config).collect();
+    let base_path = markdown_file.parent();
 
     // Export to PDF with proper error handling
-    if let Err(e) = export::pdf::export_to_pdf(&events, pdf_path, config) {
+    if let Err(e) = export::pdf::export_to_pdf_with_base(&events, pdf_path, config, base_path) {
         eprintln!("Error: Failed to export PDF to {:?}: {}", pdf_path, e);
         std::process::exit(1);
     }
