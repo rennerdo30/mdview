@@ -42,6 +42,10 @@ mdview --export-pdf output.pdf document.md
 mdview --no-watch document.md
 ```
 
+Recognized Markdown-like extensions include `.md`, `.markdown`, `.mkd`, `.mkdn`,
+`.mdown`, `.mdwn`, `.mdtxt`, `.qmd`, and `.mdx`. MDX files are opened as
+Markdown-like text; JSX/ESM blocks are not rendered as live MDX components.
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |

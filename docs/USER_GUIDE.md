@@ -79,6 +79,11 @@ Simply drag a markdown file onto the mdview window.
 
 Use **File → Open** or press `Ctrl+O` to open a file.
 
+mdview recognizes common Markdown-like extensions including `.md`, `.markdown`,
+`.mkd`, `.mkdn`, `.mdown`, `.mdwn`, `.mdtxt`, `.qmd`, and `.mdx`. MDX files are
+displayed as Markdown-like documents; JSX/ESM content is not rendered as live MDX
+components.
+
 ---
 
 ## User Interface

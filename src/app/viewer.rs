@@ -3346,7 +3346,7 @@ fn setup_file_watcher(
 
 fn rfd_open_file() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("Markdown", &["md", "markdown", "mdx"])
+        .add_filter("Markdown", crate::markdown::MARKDOWN_EXTENSIONS)
         .add_filter("All files", &["*"])
         .pick_file()
 }

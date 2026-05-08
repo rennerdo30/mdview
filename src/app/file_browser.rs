@@ -245,12 +245,9 @@ fn scan_directory_inner(
     Ok(())
 }
 
-/// Check if a file is a markdown file (including MDX)
+/// Check if a file is a Markdown-like document.
 fn is_markdown_file(path: &Path) -> bool {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) => matches!(ext.to_lowercase().as_str(), "md" | "markdown" | "mdx"),
-        None => false,
-    }
+    crate::markdown::is_markdown_path(path)
 }
 
 /// File browser panel for rendering in the UI
@@ -471,7 +468,14 @@ mod tests {
     #[test]
     fn test_is_markdown_file() {
         assert!(is_markdown_file(Path::new("test.md")));
+        assert!(is_markdown_file(Path::new("test.MD")));
         assert!(is_markdown_file(Path::new("test.markdown")));
+        assert!(is_markdown_file(Path::new("test.mkd")));
+        assert!(is_markdown_file(Path::new("test.mkdn")));
+        assert!(is_markdown_file(Path::new("test.mdown")));
+        assert!(is_markdown_file(Path::new("test.mdwn")));
+        assert!(is_markdown_file(Path::new("test.mdtxt")));
+        assert!(is_markdown_file(Path::new("test.qmd")));
         assert!(is_markdown_file(Path::new("test.mdx")));
         assert!(!is_markdown_file(Path::new("test.rs")));
         assert!(!is_markdown_file(Path::new("test.txt")));

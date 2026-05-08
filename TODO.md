@@ -36,11 +36,11 @@ None
 ## Planned
 
 ### P0: Markdown Detection & Dialect Correctness
-- [ ] Expand markdown file detection beyond `.md`, `.markdown`, and `.mdx`.
+- [x] Expand markdown file detection beyond `.md`, `.markdown`, and `.mdx`.
   - Include common variants: `.mkd`, `.mkdn`, `.mdown`, `.mdwn`, `.mdtxt`, and optionally `.qmd`.
   - Keep detection case-insensitive.
   - Update file browser tests and open-dialog filters.
-- [ ] Decide and document MDX support policy.
+- [x] Decide and document MDX support policy.
   - Either remove `.mdx` from the markdown filter, or display MDX as Markdown-with-unsupported-JSX clearly.
   - Do not imply full MDX rendering unless JSX/ESM parsing is implemented.
 - [ ] Add a parser/rendering coverage test suite for core Markdown fixtures.
