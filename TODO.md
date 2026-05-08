@@ -175,7 +175,7 @@ None
   - Gantt.
 
 ### P2: Dependency & Build Hygiene
-- [ ] Decide whether `Cargo.lock` should be tracked.
+- [x] Decide whether `Cargo.lock` should be tracked.
   - For application reproducibility, prefer tracking it.
   - If intentionally ignored, document the policy clearly.
 - [ ] Add a dependency update workflow.
