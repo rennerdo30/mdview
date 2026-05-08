@@ -377,6 +377,17 @@ impl PdfExporter {
                     self.text_buffer.push_str(code);
                     self.text_buffer.push('`');
                 }
+                Event::InlineMath(math) => {
+                    self.text_buffer.push('$');
+                    self.text_buffer.push_str(math);
+                    self.text_buffer.push('$');
+                }
+                Event::DisplayMath(math) => {
+                    self.draw_code_block(doc, math, Some("math"), font_mono)?;
+                }
+                Event::Html(html) | Event::InlineHtml(html) => {
+                    self.text_buffer.push_str(html);
+                }
                 Event::TaskListMarker(checked) => {
                     self.task_list_marker = Some(*checked);
                 }
@@ -413,6 +424,9 @@ impl PdfExporter {
                     _ => None,
                 };
             }
+            Tag::HtmlBlock => {
+                self.text_buffer.clear();
+            }
             Tag::List(start) => {
                 self.list_depth += 1;
                 self.list_stack.push(ListState {
@@ -440,6 +454,9 @@ impl PdfExporter {
             }
             Tag::TableRow => {
                 self.table_row.clear();
+            }
+            Tag::MetadataBlock(_) | Tag::DefinitionListTitle => {
+                self.text_buffer.clear();
             }
             _ => {}
         }
@@ -479,6 +496,12 @@ impl PdfExporter {
                     self.draw_code_block(doc, &code, language.as_deref(), font_mono)?;
                 }
                 self.in_code_block = false;
+            }
+            TagEnd::HtmlBlock => {
+                let html = std::mem::take(&mut self.text_buffer);
+                if !html.trim().is_empty() {
+                    self.draw_code_block(doc, &html, Some("html"), font_mono)?;
+                }
             }
             TagEnd::List(_) => {
                 self.list_depth = self.list_depth.saturating_sub(1);
@@ -525,6 +548,24 @@ impl PdfExporter {
             }
             TagEnd::TableCell => {
                 self.table_row.push(std::mem::take(&mut self.text_buffer));
+            }
+            TagEnd::MetadataBlock(_) => {
+                let metadata = std::mem::take(&mut self.text_buffer);
+                if !metadata.trim().is_empty() {
+                    self.draw_code_block(doc, &metadata, Some("metadata"), font_mono)?;
+                }
+            }
+            TagEnd::DefinitionListTitle => {
+                let title = std::mem::take(&mut self.text_buffer);
+                if !title.trim().is_empty() {
+                    self.draw_paragraph(doc, &title, font_bold)?;
+                }
+            }
+            TagEnd::DefinitionListDefinition => {
+                self.cursor_y -= 1.0;
+            }
+            TagEnd::DefinitionList => {
+                self.cursor_y -= 2.0;
             }
             _ => {}
         }

@@ -48,18 +48,18 @@ None
   - Include renderer smoke tests where practical so parsed events are not silently ignored.
 
 ### P0: Markdown Rendering Gaps
-- [ ] Render raw HTML and inline HTML events safely.
+- [x] Render raw HTML and inline HTML events safely.
   - Decide whether to show sanitized text, a styled fallback block, or a safe HTML subset.
   - Ensure HTML does not execute scripts or load unsafe resources.
-- [ ] Add math support.
+- [x] Add math support.
   - Enable `pulldown-cmark` math parsing.
   - Render inline and block math with a readable fallback first; consider a real math renderer later.
   - Add PDF export fallback for math.
-- [ ] Add front matter / metadata block support.
+- [x] Add front matter / metadata block support.
   - Enable YAML-style metadata blocks.
   - Enable plus-delimited metadata blocks if useful.
   - Render metadata as a collapsible/info block or hide it behind a config option.
-- [ ] Add definition list support.
+- [x] Add definition list support.
   - Enable `ENABLE_DEFINITION_LIST`.
   - Render terms and definitions with clear spacing and indentation.
   - Add PDF export support.

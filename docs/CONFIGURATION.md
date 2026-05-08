@@ -81,6 +81,12 @@ strikethrough = true            # Enable ~~strikethrough~~
 task_lists = true               # Enable - [ ] task lists
 footnotes = true                # Enable [^1] footnotes
 smart_punctuation = false       # Convert quotes, dashes
+html = true                     # Show safe fallback for raw/inline HTML
+math = true                     # Enable inline and display math fallback
+metadata_blocks = true          # Enable YAML/plus front matter blocks
+definition_lists = true         # Enable definition lists
+old_footnotes = false           # Enable legacy footnote syntax
+gfm = false                     # Enable pulldown-cmark's bundled GFM mode
 syntax_highlighting = true      # Highlight code blocks
 syntax_theme = "base16-ocean.dark"  # Syntect theme name
 ```
@@ -92,6 +98,12 @@ syntax_theme = "base16-ocean.dark"  # Syntect theme name
 | `task_lists` | bool | `true` | Checkbox lists |
 | `footnotes` | bool | `true` | Footnote references |
 | `smart_punctuation` | bool | `false` | Smart quotes/dashes |
+| `html` | bool | `true` | Safe fallback display for raw/inline HTML |
+| `math` | bool | `true` | Inline/display math fallback |
+| `metadata_blocks` | bool | `true` | YAML and plus-delimited front matter |
+| `definition_lists` | bool | `true` | Definition list syntax |
+| `old_footnotes` | bool | `false` | Legacy footnote syntax |
+| `gfm` | bool | `false` | pulldown-cmark bundled GFM behavior |
 | `syntax_highlighting` | bool | `true` | Code highlighting |
 | `syntax_theme` | string | `"base16-ocean.dark"` | Highlight theme |
 
@@ -264,6 +276,12 @@ strikethrough = true
 task_lists = true
 footnotes = true
 smart_punctuation = false
+html = true
+math = true
+metadata_blocks = true
+definition_lists = true
+old_footnotes = false
+gfm = false
 syntax_highlighting = true
 syntax_theme = "base16-ocean.dark"
 

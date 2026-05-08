@@ -69,6 +69,9 @@ show_toc = true
 [markdown]
 syntax_highlighting = true
 tables = true
+math = true
+metadata_blocks = true
+definition_lists = true
 
 [export]
 pdf_theme = "light"

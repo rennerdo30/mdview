@@ -69,6 +69,12 @@ fn compute_markdown_config_hash(config: &Config) -> u64 {
     feed(config.markdown.task_lists);
     feed(config.markdown.footnotes);
     feed(config.markdown.smart_punctuation);
+    feed(config.markdown.html);
+    feed(config.markdown.math);
+    feed(config.markdown.metadata_blocks);
+    feed(config.markdown.definition_lists);
+    feed(config.markdown.old_footnotes);
+    feed(config.markdown.gfm);
 
     // Also include theme name since it affects syntax highlighting colors
     for byte in config.general.theme.bytes() {

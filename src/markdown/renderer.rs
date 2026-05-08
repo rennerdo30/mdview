@@ -10,7 +10,7 @@ use std::time::Duration;
 use indexmap::IndexMap;
 
 use egui::{epaint, Color32, Label, Pos2, RichText, Sense, Stroke, TextureHandle, Ui, Vec2};
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, MetadataBlockKind, Tag, TagEnd};
 
 use crate::annotations::model::{Annotation, AnnotationKind};
 use crate::annotations::AnnotationStore;
@@ -315,12 +315,12 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                             i += 1;
                             break;
                         }
-                        Event::Text(t) => {
+                        Event::Text(t)
+                        | Event::Code(t)
+                        | Event::InlineMath(t)
+                        | Event::InlineHtml(t)
+                        | Event::Html(t) => {
                             text_len += t.len();
-                            i += 1;
-                        }
-                        Event::Code(c) => {
-                            text_len += c.len();
                             i += 1;
                         }
                         _ => {
@@ -352,7 +352,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                             i += 1;
                             break;
                         }
-                        Event::Text(t) => {
+                        Event::Text(t)
+                        | Event::Code(t)
+                        | Event::InlineMath(t)
+                        | Event::InlineHtml(t) => {
                             text_len += t.len();
                             i += 1;
                         }
@@ -410,6 +413,36 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     heading_index: None,
                 });
             }
+            Event::Start(Tag::HtmlBlock) => {
+                let start = i;
+                let mut text_len = 0usize;
+                i += 1;
+                while i < events.len() {
+                    match &events[i] {
+                        Event::End(TagEnd::HtmlBlock) => {
+                            i += 1;
+                            break;
+                        }
+                        Event::Html(t) | Event::InlineHtml(t) | Event::Text(t) => {
+                            text_len += t.len();
+                            i += 1;
+                        }
+                        _ => {
+                            i += 1;
+                        }
+                    }
+                }
+                let num_lines = (text_len as f32 / chars_per_line).ceil().max(1.0);
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: num_lines * ESTIMATED_LINE_HEIGHT + 24.0,
+                    actual_height: None,
+                    is_heading: false,
+                    text_byte_len: text_len,
+                    heading_index: None,
+                });
+            }
             Event::Start(Tag::BlockQuote(_)) => {
                 let start = i;
                 let mut text_len = 0usize;
@@ -423,7 +456,7 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                         Event::End(TagEnd::BlockQuote(_)) => {
                             depth -= 1;
                         }
-                        Event::Text(t) => {
+                        Event::Text(t) | Event::Code(t) | Event::InlineMath(t) => {
                             text_len += t.len();
                         }
                         _ => {}
@@ -459,11 +492,11 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                         Event::Start(Tag::Item) => {
                             item_count += 1;
                         }
-                        Event::Text(t) => {
+                        Event::Text(t)
+                        | Event::Code(t)
+                        | Event::InlineMath(t)
+                        | Event::InlineHtml(t) => {
                             text_len += t.len();
-                        }
-                        Event::Code(c) => {
-                            text_len += c.len();
                         }
                         _ => {}
                     }
@@ -497,7 +530,10 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                         Event::Start(Tag::TableRow) | Event::Start(Tag::TableHead) => {
                             row_count += 1;
                         }
-                        Event::Text(t) => {
+                        Event::Text(t)
+                        | Event::Code(t)
+                        | Event::InlineMath(t)
+                        | Event::InlineHtml(t) => {
                             text_len += t.len();
                         }
                         _ => {}
@@ -526,7 +562,7 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                             i += 1;
                             break;
                         }
-                        Event::Text(t) => {
+                        Event::Text(t) | Event::Code(t) | Event::InlineMath(t) => {
                             text_len += t.len();
                             i += 1;
                         }
@@ -544,6 +580,77 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
                     text_byte_len: text_len,
                     heading_index: None,
                 });
+            }
+            Event::Start(Tag::MetadataBlock(_)) => {
+                let start = i;
+                let mut text_len = 0usize;
+                i += 1;
+                while i < events.len() {
+                    match &events[i] {
+                        Event::End(TagEnd::MetadataBlock(_)) => {
+                            i += 1;
+                            break;
+                        }
+                        Event::Text(t) => {
+                            text_len += t.len();
+                            i += 1;
+                        }
+                        _ => {
+                            i += 1;
+                        }
+                    }
+                }
+                let num_lines = (text_len as f32 / chars_per_line).ceil().max(1.0);
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: num_lines * ESTIMATED_LINE_HEIGHT + 32.0,
+                    actual_height: None,
+                    is_heading: false,
+                    text_byte_len: text_len,
+                    heading_index: None,
+                });
+            }
+            Event::Start(Tag::DefinitionList) => {
+                let start = i;
+                let mut text_len = 0usize;
+                let mut depth = 1;
+                i += 1;
+                while i < events.len() && depth > 0 {
+                    match &events[i] {
+                        Event::Start(Tag::DefinitionList) => depth += 1,
+                        Event::End(TagEnd::DefinitionList) => depth -= 1,
+                        Event::Text(t)
+                        | Event::Code(t)
+                        | Event::InlineMath(t)
+                        | Event::InlineHtml(t) => text_len += t.len(),
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                let num_lines = (text_len as f32 / chars_per_line).ceil().max(1.0);
+                blocks.push(ContentBlock {
+                    event_start: start,
+                    event_end: i,
+                    estimated_height: num_lines * ESTIMATED_LINE_HEIGHT + 24.0,
+                    actual_height: None,
+                    is_heading: false,
+                    text_byte_len: text_len,
+                    heading_index: None,
+                });
+            }
+            Event::DisplayMath(math) => {
+                let num_lines = math.lines().count().max(1);
+                blocks.push(ContentBlock {
+                    event_start: i,
+                    event_end: i + 1,
+                    estimated_height: num_lines as f32 * ESTIMATED_LINE_HEIGHT + 32.0,
+                    actual_height: None,
+                    is_heading: false,
+                    text_byte_len: math.len(),
+                    heading_index: None,
+                });
+                i += 1;
             }
             Event::Rule => {
                 blocks.push(ContentBlock {
@@ -578,6 +685,21 @@ pub struct MarkdownRenderer {
 
     /// Whether we're in a code block
     in_code_block: bool,
+
+    /// Whether we're collecting a raw HTML block fallback
+    in_html_block: bool,
+
+    /// Raw HTML block content
+    html_content: String,
+
+    /// Whether we're collecting a front matter / metadata block
+    in_metadata_block: bool,
+
+    /// Metadata block kind
+    metadata_kind: Option<MetadataBlockKind>,
+
+    /// Metadata block content
+    metadata_content: String,
 
     /// Code block language
     code_language: Option<String>,
@@ -717,6 +839,11 @@ impl MarkdownRenderer {
             text_buffer: String::new(),
             heading_level: 0,
             in_code_block: false,
+            in_html_block: false,
+            html_content: String::new(),
+            in_metadata_block: false,
+            metadata_kind: None,
+            metadata_content: String::new(),
             code_language: None,
             code_content: String::new(),
             list_depth: 0,
@@ -1338,6 +1465,10 @@ impl MarkdownRenderer {
                     }
                     Event::Text(text) => self.handle_text(text),
                     Event::Code(code) => self.handle_inline_code(code),
+                    Event::InlineMath(math) => self.handle_inline_math(math),
+                    Event::DisplayMath(math) => self.render_display_math(ui, math, base_font_size),
+                    Event::Html(html) => self.handle_html(html, config.markdown.html),
+                    Event::InlineHtml(html) => self.handle_inline_html(html, config.markdown.html),
                     Event::SoftBreak => self.text_buffer.push(' '),
                     Event::HardBreak => self.text_buffer.push('\n'),
                     Event::Rule => self.render_horizontal_rule(ui),
@@ -1357,7 +1488,6 @@ impl MarkdownRenderer {
                                 .push_str(&format!("\x01FN:{}:{}\x01", name, num));
                         }
                     }
-                    _ => {}
                 }
             }
 
@@ -1384,6 +1514,11 @@ impl MarkdownRenderer {
         self.text_buffer.clear();
         self.heading_level = 0;
         self.in_code_block = false;
+        self.in_html_block = false;
+        self.html_content.clear();
+        self.in_metadata_block = false;
+        self.metadata_kind = None;
+        self.metadata_content.clear();
         self.code_language = None;
         self.code_content.clear();
         self.list_depth = 0;
@@ -1445,6 +1580,10 @@ impl MarkdownRenderer {
                     _ => None,
                 };
             }
+            Tag::HtmlBlock => {
+                self.in_html_block = true;
+                self.html_content.clear();
+            }
             Tag::List(start) => {
                 self.list_depth += 1;
                 self.list_number = *start;
@@ -1482,6 +1621,18 @@ impl MarkdownRenderer {
                 self.table_row.clear();
             }
             Tag::TableCell => {}
+            Tag::MetadataBlock(kind) => {
+                self.in_metadata_block = true;
+                self.metadata_kind = Some(*kind);
+                self.metadata_content.clear();
+            }
+            Tag::DefinitionList => {
+                ui.add_space(4.0);
+            }
+            Tag::DefinitionListTitle => {
+                self.text_buffer.clear();
+            }
+            Tag::DefinitionListDefinition => {}
             _ => {}
         }
     }
@@ -1537,6 +1688,15 @@ impl MarkdownRenderer {
                 self.code_language = None;
                 self.code_content.clear();
             }
+            TagEnd::HtmlBlock => {
+                if config.markdown.html {
+                    let html = std::mem::take(&mut self.html_content);
+                    self.render_raw_block(ui, "HTML", &html, base_font_size);
+                } else {
+                    self.html_content.clear();
+                }
+                self.in_html_block = false;
+            }
             TagEnd::List(_) => {
                 self.list_depth = self.list_depth.saturating_sub(1);
                 if self.list_depth == 0 {
@@ -1581,6 +1741,29 @@ impl MarkdownRenderer {
                 let cell = std::mem::take(&mut self.text_buffer);
                 self.table_row.push(strip_inline_markers(&cell));
             }
+            TagEnd::MetadataBlock(kind) => {
+                let title = match kind {
+                    MetadataBlockKind::YamlStyle => "Metadata",
+                    MetadataBlockKind::PlusesStyle => "Metadata",
+                };
+                let metadata = std::mem::take(&mut self.metadata_content);
+                self.render_raw_block(ui, title, &metadata, base_font_size);
+                self.metadata_kind = None;
+                self.in_metadata_block = false;
+            }
+            TagEnd::DefinitionListTitle => {
+                let text = strip_inline_markers(&std::mem::take(&mut self.text_buffer));
+                if !text.trim().is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(text).size(base_font_size).strong());
+                }
+            }
+            TagEnd::DefinitionListDefinition => {
+                ui.add_space(2.0);
+            }
+            TagEnd::DefinitionList => {
+                ui.add_space(6.0);
+            }
             _ => {}
         }
     }
@@ -1588,6 +1771,10 @@ impl MarkdownRenderer {
     fn handle_text(&mut self, text: &pulldown_cmark::CowStr<'_>) {
         if self.in_code_block {
             self.code_content.push_str(text);
+        } else if self.in_html_block {
+            self.html_content.push_str(text);
+        } else if self.in_metadata_block {
+            self.metadata_content.push_str(text);
         } else {
             self.text_buffer.push_str(text);
         }
@@ -1609,6 +1796,79 @@ impl MarkdownRenderer {
         }
 
         self.char_offset += code.len();
+    }
+
+    fn handle_inline_math(&mut self, math: &pulldown_cmark::CowStr<'_>) {
+        self.text_buffer.push('$');
+        self.text_buffer.push_str(math);
+        self.text_buffer.push('$');
+        self.char_offset += math.len();
+    }
+
+    fn handle_html(&mut self, html: &pulldown_cmark::CowStr<'_>, enabled: bool) {
+        if !enabled {
+            self.char_offset += html.len();
+            return;
+        }
+
+        if self.in_html_block {
+            self.html_content.push_str(html);
+        } else {
+            self.text_buffer.push_str(html);
+        }
+        self.char_offset += html.len();
+    }
+
+    fn handle_inline_html(&mut self, html: &pulldown_cmark::CowStr<'_>, enabled: bool) {
+        if enabled {
+            self.text_buffer.push_str(html);
+        }
+        self.char_offset += html.len();
+    }
+
+    fn render_display_math(
+        &mut self,
+        ui: &mut Ui,
+        math: &pulldown_cmark::CowStr<'_>,
+        base_font_size: f32,
+    ) {
+        self.render_raw_block(ui, "Math", math, base_font_size);
+        self.char_offset += math.len();
+    }
+
+    fn render_raw_block(&self, ui: &mut Ui, label: &str, content: &str, base_font_size: f32) {
+        let content = content.trim();
+        if content.is_empty() {
+            return;
+        }
+
+        let is_dark = ui.visuals().dark_mode;
+        let bg = theme_colors::code_block_bg(is_dark);
+        let text_color = ui.style().visuals.text_color();
+        ui.add_space(6.0);
+        egui::Frame::none()
+            .fill(bg)
+            .stroke(Stroke::new(
+                1.0,
+                ui.visuals().widgets.noninteractive.bg_stroke.color,
+            ))
+            .inner_margin(egui::Margin::same(8.0))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(label)
+                        .size(base_font_size * 0.75)
+                        .strong()
+                        .color(theme_colors::code_line_number(is_dark)),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(content)
+                        .size(base_font_size * 0.9)
+                        .monospace()
+                        .color(text_color),
+                );
+            });
+        ui.add_space(6.0);
     }
 
     fn render_heading_with_config(

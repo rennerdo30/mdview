@@ -121,6 +121,24 @@ pub struct MarkdownConfig {
     /// Enable smart punctuation
     pub smart_punctuation: bool,
 
+    /// Enable raw HTML / inline HTML parsing and safe fallback rendering
+    pub html: bool,
+
+    /// Enable inline and display math parsing
+    pub math: bool,
+
+    /// Enable YAML/front matter metadata blocks
+    pub metadata_blocks: bool,
+
+    /// Enable definition list parsing
+    pub definition_lists: bool,
+
+    /// Enable legacy footnote syntax
+    pub old_footnotes: bool,
+
+    /// Enable pulldown-cmark's bundled GitHub Flavored Markdown option
+    pub gfm: bool,
+
     /// Enable syntax highlighting for code blocks
     pub syntax_highlighting: bool,
 
@@ -139,6 +157,12 @@ impl Default for MarkdownConfig {
             task_lists: true,
             footnotes: true,
             smart_punctuation: false,
+            html: true,
+            math: true,
+            metadata_blocks: true,
+            definition_lists: true,
+            old_footnotes: false,
+            gfm: false,
             syntax_highlighting: true,
             syntax_theme: "auto".to_string(),
             show_line_numbers: false,

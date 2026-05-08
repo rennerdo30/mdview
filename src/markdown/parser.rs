@@ -36,6 +36,22 @@ pub fn parse_with_config<'a>(content: &'a str, config: &Config) -> Parser<'a> {
     if config.markdown.smart_punctuation {
         options |= Options::ENABLE_SMART_PUNCTUATION;
     }
+    if config.markdown.math {
+        options |= Options::ENABLE_MATH;
+    }
+    if config.markdown.metadata_blocks {
+        options |= Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
+        options |= Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
+    }
+    if config.markdown.definition_lists {
+        options |= Options::ENABLE_DEFINITION_LIST;
+    }
+    if config.markdown.old_footnotes {
+        options |= Options::ENABLE_OLD_FOOTNOTES;
+    }
+    if config.markdown.gfm {
+        options |= Options::ENABLE_GFM;
+    }
     // Always enable heading attributes
     options |= Options::ENABLE_HEADING_ATTRIBUTES;
 
@@ -115,5 +131,42 @@ mod tests {
     fn test_heading_level() {
         assert_eq!(heading_level_to_usize(HeadingLevel::H1), 1);
         assert_eq!(heading_level_to_usize(HeadingLevel::H6), 6);
+    }
+
+    #[test]
+    fn test_parse_extended_markdown_events() {
+        let config = Config::default();
+        let content = r#"---
+title: Demo
+---
+
+Term
+: Definition
+
+Inline math $a + b$.
+
+$$
+x = y
+$$
+
+<section>Raw HTML</section>
+"#;
+        let events: Vec<_> = parse_with_config(content, &config).collect();
+
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::MetadataBlock(_)))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::DefinitionList))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::InlineMath(_))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::DisplayMath(_))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Html(_) | Event::InlineHtml(_))));
     }
 }

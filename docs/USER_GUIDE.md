@@ -222,6 +222,9 @@ height = 700
 tables = true
 strikethrough = true
 task_lists = true
+math = true
+metadata_blocks = true
+definition_lists = true
 syntax_highlighting = true
 
 [annotations]
