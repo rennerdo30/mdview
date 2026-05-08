@@ -178,7 +178,7 @@ None
 - [x] Decide whether `Cargo.lock` should be tracked.
   - For application reproducibility, prefer tracking it.
   - If intentionally ignored, document the policy clearly.
-- [ ] Add a dependency update workflow.
+- [x] Add a dependency update workflow.
   - Run `cargo update`.
   - Run `cargo check --all-features`.
   - Run `cargo clippy --all-targets --all-features -- -D warnings`.
