@@ -4438,4 +4438,34 @@ Raw HTML
         assert!(job.text.contains("plain text"));
         assert!(job.text.contains("second line"));
     }
+
+    #[test]
+    fn test_mermaid_fixture_type_detection() {
+        let cases = [
+            (
+                include_str!("../../fixtures/mermaid/flowchart.mmd"),
+                "Flowchart",
+            ),
+            (
+                include_str!("../../fixtures/mermaid/sequence.mmd"),
+                "Sequence Diagram",
+            ),
+            (
+                include_str!("../../fixtures/mermaid/class.mmd"),
+                "Class Diagram",
+            ),
+            (
+                include_str!("../../fixtures/mermaid/state.mmd"),
+                "State Diagram",
+            ),
+            (
+                include_str!("../../fixtures/mermaid/gantt.mmd"),
+                "Gantt Chart",
+            ),
+        ];
+
+        for (fixture, expected) in cases {
+            assert_eq!(detect_mermaid_type(fixture), expected);
+        }
+    }
 }

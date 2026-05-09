@@ -163,11 +163,11 @@ None
   - Treat visible overlap, clipping, unreadable contrast, and broken wrapping as regressions.
 
 ### P2: Mermaid
-- [ ] Revisit native Mermaid rendering.
+- [x] Revisit native Mermaid rendering.
   - Track upstream renderer compatibility.
   - Keep CLI fallback, but reduce dependency friction where possible.
   - Add clearer diagnostics when Node or `mmdc` is unavailable.
-- [ ] Add Mermaid rendering fixtures.
+- [x] Add Mermaid rendering fixtures.
   - Flowchart.
   - Sequence.
   - Class.
