@@ -121,7 +121,7 @@ None
   - Math renderer unavailable.
 
 ### P2: Syntax Highlighting Coverage
-- [ ] Add syntax language coverage tests.
+- [x] Add syntax language coverage tests.
   - Verify common aliases for Rust, Python, JavaScript, TypeScript, TSX, JSX, Go, C, C++, Java, TOML, YAML, JSON, Bash, SQL, HTML, CSS, Markdown, and diff.
   - Confirm unknown languages fall back to plain text.
 - [x] Normalize common language aliases before passing to syntect.

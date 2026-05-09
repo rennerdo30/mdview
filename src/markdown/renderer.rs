@@ -3744,9 +3744,7 @@ fn normalize_language_token(language: Option<&str>) -> Option<Cow<'_, str>> {
     let alias = match lower.as_str() {
         "sh" | "shell" | "zsh" => "bash",
         "js" | "mjs" | "cjs" => "javascript",
-        "ts" | "mts" | "cts" => "typescript",
-        "jsx" => "javascript",
-        "tsx" => "typescript",
+        "typescript" | "ts" | "mts" | "cts" | "jsx" | "tsx" => "javascript",
         "yml" => "yaml",
         "c++" | "cc" | "cxx" | "hpp" | "hxx" => "cpp",
         "golang" => "go",
@@ -4322,7 +4320,7 @@ Raw HTML
         );
         assert_eq!(
             normalize_language_token(Some("language-tsx")).as_deref(),
-            Some("typescript")
+            Some("javascript")
         );
         assert_eq!(
             normalize_language_token(Some("shell session")).as_deref(),
@@ -4342,5 +4340,102 @@ Raw HTML
         );
         assert!(normalize_language_token(Some("")).is_none());
         assert!(normalize_language_token(None).is_none());
+    }
+
+    #[test]
+    fn test_normalize_language_token_common_language_set() {
+        let cases = [
+            ("rust", "rust"),
+            ("python", "python"),
+            ("py", "python"),
+            ("javascript", "javascript"),
+            ("js", "javascript"),
+            ("typescript", "javascript"),
+            ("ts", "javascript"),
+            ("tsx", "javascript"),
+            ("jsx", "javascript"),
+            ("go", "go"),
+            ("golang", "go"),
+            ("c", "c"),
+            ("c++", "cpp"),
+            ("java", "java"),
+            ("toml", "toml"),
+            ("yaml", "yaml"),
+            ("yml", "yaml"),
+            ("json", "json"),
+            ("bash", "bash"),
+            ("sh", "bash"),
+            ("sql", "sql"),
+            ("html", "html"),
+            ("css", "css"),
+            ("markdown", "markdown"),
+            ("md", "markdown"),
+            ("diff", "diff"),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                normalize_language_token(Some(input)).as_deref(),
+                Some(expected),
+                "{input} should normalize to {expected}"
+            );
+        }
+    }
+
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn test_highlight_common_language_set_produces_layout_jobs() {
+        let languages = [
+            "rust",
+            "python",
+            "javascript",
+            "typescript",
+            "tsx",
+            "jsx",
+            "go",
+            "c",
+            "cpp",
+            "java",
+            "toml",
+            "yaml",
+            "json",
+            "bash",
+            "sql",
+            "html",
+            "css",
+            "markdown",
+            "diff",
+        ];
+
+        for language in languages {
+            let normalized = normalize_language_token(Some(language));
+            let job = highlight_code(
+                "fn main() { println!(\"hello\"); }\n",
+                normalized.as_deref(),
+                "auto",
+                true,
+                false,
+            );
+            assert!(
+                job.is_some(),
+                "{language} should produce highlighted or plain fallback output"
+            );
+        }
+    }
+
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn test_highlight_unknown_language_falls_back_to_plain_text() {
+        let job = highlight_code(
+            "plain text\nsecond line",
+            normalize_language_token(Some("unknown-lang")).as_deref(),
+            "auto",
+            true,
+            true,
+        )
+        .expect("fallback highlighting should produce a layout job");
+
+        assert!(job.text.contains("plain text"));
+        assert!(job.text.contains("second line"));
     }
 }
