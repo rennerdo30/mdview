@@ -119,6 +119,12 @@ pub fn collect_text<'a>(events: impl Iterator<Item = &'a Event<'a>>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pulldown_cmark::{MetadataBlockKind, TagEnd};
+
+    fn parse_default_events(content: &str) -> Vec<Event<'_>> {
+        let config = Config::default();
+        parse_with_config(content, &config).collect()
+    }
 
     #[test]
     fn test_parse_basic() {
@@ -135,7 +141,6 @@ mod tests {
 
     #[test]
     fn test_parse_extended_markdown_events() {
-        let config = Config::default();
         let content = r#"---
 title: Demo
 ---
@@ -151,11 +156,12 @@ $$
 
 <section>Raw HTML</section>
 "#;
-        let events: Vec<_> = parse_with_config(content, &config).collect();
+        let events = parse_default_events(content);
 
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, Event::Start(Tag::MetadataBlock(_)))));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Start(Tag::MetadataBlock(MetadataBlockKind::YamlStyle))
+        )));
         assert!(events
             .iter()
             .any(|event| matches!(event, Event::Start(Tag::DefinitionList))));
@@ -168,5 +174,220 @@ $$
         assert!(events
             .iter()
             .any(|event| matches!(event, Event::Html(_) | Event::InlineHtml(_))));
+    }
+
+    #[test]
+    fn test_parse_core_commonmark_fixture() {
+        let content = r#"# Heading
+
+Paragraph with **strong**, *emphasis*, `code`, and [a link](https://example.com).
+
+> Quote
+
+- first
+- second
+
+1. ordered
+2. list
+
+---
+"#;
+        let events = parse_default_events(content);
+
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Heading { .. }))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Strong))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Emphasis))));
+        assert!(events.iter().any(|event| matches!(event, Event::Code(_))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Link { .. }))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::BlockQuote(_)))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::List(None)))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::List(Some(1))))));
+        assert!(events.iter().any(|event| matches!(event, Event::Rule)));
+    }
+
+    #[test]
+    fn test_parse_gfm_like_fixture() {
+        let content = r#"| Name | Done |
+| ---- | ---- |
+| Task | yes |
+
+- [x] complete
+- [ ] pending
+
+~~deleted~~
+
+[^note]
+
+[^note]: footnote text
+"#;
+        let events = parse_default_events(content);
+
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Table(_)))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::TableHead))));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::TaskListMarker(_)))
+                .count(),
+            2
+        );
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Strikethrough))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::FootnoteReference(_))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::FootnoteDefinition(_)))));
+    }
+
+    #[test]
+    fn test_parse_links_images_and_code_fences_fixture() {
+        let content = r#"![Alt text](images/example.png)
+
+```rust
+fn main() {}
+```
+
+<https://example.com>
+"#;
+        let events = parse_default_events(content);
+
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Image { .. }))));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(language))) if language.as_ref() == "rust"
+            )
+        }));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Link { .. }))));
+    }
+
+    #[test]
+    fn test_parse_metadata_variants_fixture() {
+        let yaml_events = parse_default_events(
+            r#"---
+title: YAML
+---
+"#,
+        );
+        let plus_events = parse_default_events(
+            r#"+++
+title = "Plus"
++++
+"#,
+        );
+
+        assert!(yaml_events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Start(Tag::MetadataBlock(MetadataBlockKind::YamlStyle))
+            )
+        }));
+        assert!(plus_events.iter().any(|event| {
+            matches!(
+                event,
+                Event::Start(Tag::MetadataBlock(MetadataBlockKind::PlusesStyle))
+            )
+        }));
+    }
+
+    #[test]
+    fn test_parse_config_flags_can_disable_extensions() {
+        let mut config = Config::default();
+        config.markdown.tables = false;
+        config.markdown.task_lists = false;
+        config.markdown.strikethrough = false;
+        config.markdown.math = false;
+        config.markdown.metadata_blocks = false;
+        config.markdown.definition_lists = false;
+
+        let content = r#"---
+title: Demo
+---
+
+| A |
+| - |
+| B |
+
+- [x] task
+
+~~deleted~~
+
+$x$
+
+Term
+: Definition
+"#;
+        let events: Vec<_> = parse_with_config(content, &config).collect();
+
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Table(_)))));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, Event::TaskListMarker(_))));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::Strikethrough))));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, Event::InlineMath(_))));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::MetadataBlock(_)))));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::DefinitionList))));
+    }
+
+    #[test]
+    fn test_collect_text_covers_text_and_inline_code() {
+        let events = parse_default_events("Text with `code`.");
+
+        assert_eq!(collect_text(events.iter()), "Text with code.");
+    }
+
+    #[test]
+    fn test_is_block_element_tracks_supported_blocks() {
+        let events = parse_default_events(
+            r#"# Heading
+
+Paragraph
+
+| A |
+| - |
+| B |
+"#,
+        );
+
+        assert!(events.iter().any(is_block_element));
+        assert!(events.iter().any(is_section_start));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::End(TagEnd::Table))));
     }
 }

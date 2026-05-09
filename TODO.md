@@ -43,7 +43,7 @@ None
 - [x] Decide and document MDX support policy.
   - Either remove `.mdx` from the markdown filter, or display MDX as Markdown-with-unsupported-JSX clearly.
   - Do not imply full MDX rendering unless JSX/ESM parsing is implemented.
-- [ ] Add a parser/rendering coverage test suite for core Markdown fixtures.
+- [x] Add a parser/rendering coverage test suite for core Markdown fixtures.
   - Cover CommonMark basics, GFM-like features, front matter, raw HTML, math, definition lists, links, images, tables, footnotes, and task lists.
   - Include renderer smoke tests where practical so parsed events are not silently ignored.
 
