@@ -10,6 +10,12 @@ use eframe::egui::{self, Key, Modifiers, Rounding, Stroke, Vec2};
 
 use super::state::{AppState, FileEvent};
 
+fn is_mdx_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mdx"))
+}
+
 /// Parsed keybinding
 #[derive(Debug, Clone)]
 struct ParsedKeybinding {
@@ -402,6 +408,8 @@ impl MdViewApp {
             if let Err(e) = state.load_file(path.clone()) {
                 log::error!("Failed to load file: {}", e);
                 state.set_status(format_load_error(&e));
+            } else if is_mdx_path(&path) {
+                state.set_status("MDX opened as Markdown; JSX and ESM are shown as text");
             }
         }
 
@@ -1624,12 +1632,16 @@ impl MdViewApp {
 
     /// Actually load a file (called after fade-out completes or for first load)
     fn perform_file_load(&mut self, path: PathBuf) {
+        let is_mdx = is_mdx_path(&path);
         let base_path = path.parent().map(|p| p.to_path_buf());
         self.renderer.set_base_path(base_path);
         self.renderer.clear_image_cache();
 
         if let Err(e) = self.state.load_file(path) {
             self.state.set_status(format_load_error(&e));
+        } else if is_mdx {
+            self.state
+                .set_status("MDX opened as Markdown; JSX and ESM are shown as text");
         }
 
         self.sync_native_menu_state();

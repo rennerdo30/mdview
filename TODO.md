@@ -114,7 +114,7 @@ None
   - Markdown settings: extensions, syntax highlighting, line numbers, math, HTML, metadata visibility.
   - Layout settings: font size, reading width, image width.
   - Export settings: PDF page size, margins, TOC, theme.
-- [ ] Make unsupported feature fallbacks visible but unobtrusive.
+- [x] Make unsupported feature fallbacks visible but unobtrusive.
   - MDX JSX/ESM fallback.
   - Unsupported image types.
   - Mermaid CLI missing.
