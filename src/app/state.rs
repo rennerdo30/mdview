@@ -337,13 +337,19 @@ impl AppState {
     /// Set TOC visibility (updates config)
     pub fn set_toc_visible(&mut self, visible: bool) {
         self.config.general.show_toc = visible;
+        self.restart_toc_animation();
+    }
+
+    /// Restart TOC animation timing after a direct visibility change.
+    pub fn restart_toc_animation(&mut self) {
+        self.toc_animation_last_time = None;
     }
 
     /// Toggle TOC visibility (starts animation)
     pub fn toggle_toc(&mut self) {
         self.config.general.show_toc = !self.config.general.show_toc;
         // Reset animation timer so first frame gets a proper delta
-        self.toc_animation_last_time = None;
+        self.restart_toc_animation();
     }
 
     /// Update TOC animation progress. Returns true if animation is still in progress.

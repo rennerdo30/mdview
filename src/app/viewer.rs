@@ -2227,6 +2227,7 @@ impl MdViewApp {
         let mut changed = false;
         let mut style_changed = false;
         let mut markdown_changed = false;
+        let mut toc_visibility_changed = false;
 
         egui::Window::new("Settings")
             .open(&mut open)
@@ -2260,9 +2261,13 @@ impl MdViewApp {
                     changed |= ui
                         .checkbox(&mut config.general.hot_reload, "Hot reload")
                         .changed();
-                    changed |= ui
+                    if ui
                         .checkbox(&mut config.general.show_toc, "Show table of contents")
-                        .changed();
+                        .changed()
+                    {
+                        changed = true;
+                        toc_visibility_changed = true;
+                    }
                     changed |= ui
                         .checkbox(&mut config.general.check_for_updates, "Check for updates")
                         .changed();
@@ -2423,9 +2428,15 @@ impl MdViewApp {
             self.state.invalidate_markdown_cache();
         }
 
+        if toc_visibility_changed {
+            self.state.restart_toc_animation();
+        }
+
         if changed {
             self.cached_keybindings =
                 CachedKeybindings::from_config(&self.state.config.keybindings);
+            #[cfg(feature = "plugins")]
+            self.state.sync_config_to_plugins();
             self.save_config_debounced(ctx);
         }
     }
