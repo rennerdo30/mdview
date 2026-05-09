@@ -917,7 +917,10 @@ impl AppState {
                 .collect();
             self.cached_recent_files = Some(Arc::new(files));
         }
-        Arc::clone(self.cached_recent_files.as_ref().unwrap())
+        self.cached_recent_files
+            .as_ref()
+            .map(Arc::clone)
+            .unwrap_or_else(|| Arc::new(Vec::new()))
     }
 
     /// Invalidate the cached recent files (call after adding/removing files)

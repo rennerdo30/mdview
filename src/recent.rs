@@ -141,7 +141,10 @@ impl RecentFiles {
         }
 
         // Return references to cached results
-        self.existing_cache.as_ref().unwrap().0.iter().collect()
+        self.existing_cache
+            .as_ref()
+            .map(|(existing, _)| existing.iter().collect())
+            .unwrap_or_default()
     }
 
     /// Check if there are any recent files

@@ -139,11 +139,12 @@ fn build_tree(flat: &[TocEntry]) -> Vec<TocEntry> {
                 break;
             }
             // Pop this entry and add to parent or result
-            let (popped, _) = stack.pop().unwrap();
-            if let Some((parent, _)) = stack.last_mut() {
-                parent.children.push(popped);
-            } else {
-                result.push(popped);
+            if let Some((popped, _)) = stack.pop() {
+                if let Some((parent, _)) = stack.last_mut() {
+                    parent.children.push(popped);
+                } else {
+                    result.push(popped);
+                }
             }
         }
 

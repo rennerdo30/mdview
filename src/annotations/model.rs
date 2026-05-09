@@ -307,7 +307,7 @@ impl AnnotationStore {
             sorted.sort_by_key(|a| a.start);
             self.sorted_cache = Some(sorted);
         }
-        self.sorted_cache.as_ref().unwrap()
+        self.sorted_cache.as_deref().unwrap_or(&[])
     }
 
     /// Get annotations that overlap with a range
