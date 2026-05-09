@@ -82,19 +82,19 @@ None
   - Keep local-path traversal protections intact.
 
 ### P1: Performance & Regression Gates
-- [ ] Add repeatable performance benchmarks.
+- [x] Add repeatable performance benchmarks.
   - Benchmark initial load for 1k, 5k, and 10k line documents.
   - Benchmark scroll/render hot paths with large tables, code blocks, images, annotations, and TOC-heavy files.
   - Track parse time, render frame time, memory, and cache hit behavior.
-- [ ] Add fixture-based performance regression thresholds.
+- [x] Add fixture-based performance regression thresholds.
   - Keep thresholds loose enough for CI variance but strict enough to catch obvious regressions.
   - Document how to run benchmarks locally.
-- [ ] Add stress fixtures for huge Markdown documents.
+- [x] Add stress fixtures for huge Markdown documents.
   - Large plain document.
   - Large document with many headings.
   - Large document with many annotations.
   - Large document with many fenced code blocks and images.
-- [ ] Audit remaining per-frame work.
+- [x] Audit remaining per-frame work.
   - Confirm heading positions, visible range calculation, plugin hooks, and annotation selection do not scale poorly on large files.
   - Profile before further optimization.
 
