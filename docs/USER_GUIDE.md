@@ -208,6 +208,8 @@ Annotations saved as `.filename.mdview-annotations.json` next to your file.
 | macOS | `~/Library/Application Support/com.mdview.mdview/config.toml` |
 | Windows | `%APPDATA%\mdview\mdview\config.toml` |
 
+Use **File → Settings...** for common preferences, or **File → Edit Config...** to edit the TOML file directly.
+
 ### Example Config
 
 ```toml

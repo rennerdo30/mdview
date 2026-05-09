@@ -109,7 +109,7 @@ None
   - Avoid rebuilding indexes every frame.
 
 ### P1: Configuration & UX
-- [ ] Add a settings/preferences UI.
+- [x] Add a settings/preferences UI.
   - General settings: theme, hot reload, TOC visibility, file browser behavior.
   - Markdown settings: extensions, syntax highlighting, line numbers, math, HTML, metadata visibility.
   - Layout settings: font size, reading width, image width.

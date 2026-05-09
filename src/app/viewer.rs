@@ -86,6 +86,7 @@ struct MenuActions {
     clear_recent: bool,
     show_help: bool,
     show_about: bool,
+    show_settings: bool,
     edit_config: bool,
     file_to_open: Option<PathBuf>,
     new_theme: Option<String>,
@@ -350,6 +351,8 @@ pub struct MdViewApp {
     show_help_dialog: bool,
     /// Whether to show the About dialog
     show_about_dialog: bool,
+    /// Whether to show the settings/preferences dialog
+    show_settings_dialog: bool,
     /// Whether to show the full-document search bar
     show_document_search: bool,
     /// Request focus for the search input on the next search bar frame
@@ -456,6 +459,7 @@ impl MdViewApp {
             show_update_dialog: false,
             show_help_dialog: false,
             show_about_dialog: false,
+            show_settings_dialog: false,
             show_document_search: false,
             document_search_focus_pending: false,
             native_menu: None,
@@ -1801,6 +1805,11 @@ impl MdViewApp {
 
             ui.separator();
 
+            if ui.button("Settings...").clicked() {
+                actions.show_settings = true;
+                ui.close_menu();
+            }
+
             if ui.button("Edit Config...").clicked() {
                 actions.edit_config = true;
                 ui.close_menu();
@@ -1963,6 +1972,9 @@ impl MdViewApp {
         }
         if actions.show_about {
             self.show_about_dialog = true;
+        }
+        if actions.show_settings {
+            self.show_settings_dialog = true;
         }
         if actions.toggle_toc {
             self.state.toggle_toc();
@@ -2196,6 +2208,214 @@ impl MdViewApp {
                     }
                 });
             });
+    }
+
+    fn render_settings_dialog(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_settings_dialog;
+        let mut changed = false;
+        let mut style_changed = false;
+        let mut markdown_changed = false;
+
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .default_width(520.0)
+            .resizable(true)
+            .vscroll(true)
+            .show(ctx, |ui| {
+                let config = &mut self.state.config;
+
+                ui.collapsing("General", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Theme");
+                        egui::ComboBox::from_id_salt("settings_theme")
+                            .selected_text(&config.general.theme)
+                            .show_ui(ui, |ui| {
+                                for theme in ["dark", "light"] {
+                                    if ui
+                                        .selectable_value(
+                                            &mut config.general.theme,
+                                            theme.to_string(),
+                                            theme,
+                                        )
+                                        .changed()
+                                    {
+                                        changed = true;
+                                        style_changed = true;
+                                    }
+                                }
+                            });
+                    });
+                    changed |= ui
+                        .checkbox(&mut config.general.hot_reload, "Hot reload")
+                        .changed();
+                    changed |= ui
+                        .checkbox(&mut config.general.show_toc, "Show table of contents")
+                        .changed();
+                    changed |= ui
+                        .checkbox(&mut config.general.check_for_updates, "Check for updates")
+                        .changed();
+                });
+
+                ui.separator();
+                ui.collapsing("Markdown", |ui| {
+                    let mut mark = |response: egui::Response| {
+                        if response.changed() {
+                            changed = true;
+                            markdown_changed = true;
+                        }
+                    };
+
+                    mark(ui.checkbox(&mut config.markdown.tables, "Tables"));
+                    mark(ui.checkbox(&mut config.markdown.task_lists, "Task lists"));
+                    mark(ui.checkbox(&mut config.markdown.footnotes, "Footnotes"));
+                    mark(ui.checkbox(&mut config.markdown.strikethrough, "Strikethrough"));
+                    mark(ui.checkbox(&mut config.markdown.html, "Raw HTML fallback"));
+                    mark(ui.checkbox(&mut config.markdown.math, "Math fallback"));
+                    mark(ui.checkbox(&mut config.markdown.metadata_blocks, "Metadata blocks"));
+                    mark(ui.checkbox(&mut config.markdown.definition_lists, "Definition lists"));
+                    mark(ui.checkbox(&mut config.markdown.gfm, "GFM alert blockquotes"));
+                    mark(ui.checkbox(&mut config.markdown.old_footnotes, "Old footnotes"));
+                    mark(ui.checkbox(
+                        &mut config.markdown.syntax_highlighting,
+                        "Syntax highlighting",
+                    ));
+                    mark(ui.checkbox(&mut config.markdown.show_line_numbers, "Line numbers"));
+                });
+
+                ui.separator();
+                ui.collapsing("Layout", |ui| {
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut config.theme.fonts.size, 10.0..=24.0)
+                                .text("Font size"),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                        style_changed = true;
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.label("Reading width");
+                        let mut width_choice = match config.layout.content_width {
+                            None => 0,
+                            Some(560.0) => 1,
+                            Some(720.0) => 2,
+                            Some(_) => 3,
+                        };
+                        egui::ComboBox::from_id_salt("settings_reading_width")
+                            .selected_text(match width_choice {
+                                0 => "Full",
+                                1 => "Narrow",
+                                2 => "Comfortable",
+                                _ => "Custom",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut width_choice, 0, "Full");
+                                ui.selectable_value(&mut width_choice, 1, "Narrow");
+                                ui.selectable_value(&mut width_choice, 2, "Comfortable");
+                                ui.selectable_value(&mut width_choice, 3, "Custom");
+                            });
+                        let new_width = match width_choice {
+                            0 => None,
+                            1 => Some(560.0),
+                            2 => Some(720.0),
+                            _ => config.layout.content_width.or(Some(720.0)),
+                        };
+                        if config.layout.content_width != new_width {
+                            config.layout.content_width = new_width;
+                            changed = true;
+                        }
+                    });
+
+                    if let Some(width) = config.layout.content_width.as_mut() {
+                        changed |= ui
+                            .add(egui::Slider::new(width, 320.0..=1400.0).text("Custom width"))
+                            .changed();
+                    }
+
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut config.layout.content_margin, 0.0..=120.0)
+                                .text("Content margin"),
+                        )
+                        .changed();
+
+                    let mut limit_images = config.layout.image_width.is_some();
+                    if ui
+                        .checkbox(&mut limit_images, "Limit image width")
+                        .changed()
+                    {
+                        config.layout.image_width = if limit_images { Some(600.0) } else { None };
+                        changed = true;
+                    }
+                    if let Some(width) = config.layout.image_width.as_mut() {
+                        changed |= ui
+                            .add(egui::Slider::new(width, 160.0..=1600.0).text("Image width"))
+                            .changed();
+                    }
+                });
+
+                ui.separator();
+                ui.collapsing("Export", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("PDF theme");
+                        egui::ComboBox::from_id_salt("settings_pdf_theme")
+                            .selected_text(&config.export.pdf_theme)
+                            .show_ui(ui, |ui| {
+                                for theme in ["light", "dark"] {
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut config.export.pdf_theme,
+                                            theme.to_string(),
+                                            theme,
+                                        )
+                                        .changed();
+                                }
+                            });
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Page size");
+                        egui::ComboBox::from_id_salt("settings_pdf_page_size")
+                            .selected_text(&config.export.page_size)
+                            .show_ui(ui, |ui| {
+                                for page_size in ["A4", "Letter"] {
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut config.export.page_size,
+                                            page_size.to_string(),
+                                            page_size,
+                                        )
+                                        .changed();
+                                }
+                            });
+                    });
+                    changed |= ui
+                        .checkbox(&mut config.export.include_toc, "Include table of contents")
+                        .changed();
+                    changed |= ui
+                        .add(egui::Slider::new(&mut config.export.margin, 5..=40).text("Margin"))
+                        .changed();
+                });
+            });
+
+        self.show_settings_dialog = open;
+
+        if style_changed {
+            let style = create_style(self.state.current_theme(), &self.state.config);
+            ctx.set_style(style);
+        }
+
+        if markdown_changed {
+            self.state.update_config_hash();
+            self.state.invalidate_markdown_cache();
+        }
+
+        if changed {
+            self.cached_keybindings =
+                CachedKeybindings::from_config(&self.state.config.keybindings);
+            self.save_config_debounced(ctx);
+        }
     }
 
     fn render_toc_sidebar(&mut self, ctx: &egui::Context) {
@@ -3126,6 +3346,10 @@ impl eframe::App for MdViewApp {
         // Render about dialog if needed
         if self.show_about_dialog {
             self.render_about_dialog(ctx);
+        }
+
+        if self.show_settings_dialog {
+            self.render_settings_dialog(ctx);
         }
 
         // Flush any pending saves after UI work is done
