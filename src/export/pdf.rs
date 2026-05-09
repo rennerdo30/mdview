@@ -1299,6 +1299,14 @@ impl PdfExporter {
                     .map_err(|e| PdfError::Io(format!("Failed to create image: {:?}", e)))?;
                 (img, w, h)
             }
+            "webp" => {
+                let decoder = codecs::webp::WebPDecoder::new(cursor)
+                    .map_err(|e| PdfError::Io(format!("Failed to decode WebP: {}", e)))?;
+                let (w, h) = decoder.dimensions();
+                let img = Image::try_from(decoder)
+                    .map_err(|e| PdfError::Io(format!("Failed to create image: {:?}", e)))?;
+                (img, w, h)
+            }
             _ => {
                 return Err(PdfError::Io(format!(
                     "Unsupported image format: {}",

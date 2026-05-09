@@ -70,13 +70,13 @@ None
   - If enabled, add compatibility tests and document the behavior.
 
 ### P1: PDF Export Coverage
-- [ ] Align PDF export with all supported Markdown renderer features.
+- [x] Align PDF export with all supported Markdown renderer features.
   - Raw HTML fallback.
   - Math fallback.
   - Metadata/front matter handling.
   - Definition lists.
   - Any future GFM-specific behavior.
-- [ ] Expand PDF image support.
+- [x] Expand PDF image support.
   - Add SVG support through rasterization or documented fallback.
   - Add WebP support if the image stack supports it reliably.
   - Keep local-path traversal protections intact.

@@ -161,6 +161,8 @@ Export your rendered markdown to PDF:
 2. PDF saved as `filename.pdf` (same directory)
 3. Status bar confirms export
 
+Local PNG, JPEG, BMP, GIF, and WebP images are embedded when they resolve inside the document directory. Remote images and SVG files are skipped during PDF export.
+
 **CLI Export:**
 ```bash
 mdview --export-pdf output.pdf document.md
@@ -326,6 +328,7 @@ Then use: `mdview --theme mytheme document.md`
 
 - Check write permissions in directory
 - Verify enough disk space
+- Convert SVG images to PNG/WebP when they need to appear in exported PDFs
 - Check status bar for error message
 
 ### Getting Help
