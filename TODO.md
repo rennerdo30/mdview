@@ -135,7 +135,7 @@ None
   - Annotations.
   - Code blocks with line numbers.
   - Light/dark themes.
-- [ ] Add PDF visual smoke tests.
+- [x] Add PDF visual smoke tests.
   - Generate small PDFs for fixture documents.
   - Validate that export succeeds and includes expected high-level content.
 
@@ -144,7 +144,7 @@ None
   - Check heading hierarchy, spacing, line height, paragraph rhythm, and nested block spacing.
   - Check lists, nested lists, task lists, blockquotes, tables, code blocks, inline code, links, images, footnotes, and horizontal rules.
   - Check mixed inline styles such as bold plus italic, links with inline code, strikethrough with annotations, and code inside list items.
-- [ ] Create styling regression fixtures.
+- [x] Create styling regression fixtures.
   - One dense document with every supported Markdown element.
   - One typography-heavy document with long paragraphs and many heading levels.
   - One edge-case document with long words, long URLs, wide tables, large images, and deeply nested lists.
