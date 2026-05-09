@@ -93,6 +93,22 @@ fn compute_content_hash(content: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn build_searchable_document_text<'a>(events: impl Iterator<Item = &'a Event<'a>>) -> String {
+    let mut text = String::new();
+    for event in events {
+        match event {
+            Event::Text(value)
+            | Event::Code(value)
+            | Event::InlineMath(value)
+            | Event::DisplayMath(value)
+            | Event::Html(value)
+            | Event::InlineHtml(value) => text.push_str(value),
+            _ => {}
+        }
+    }
+    text
+}
+
 /// File change event from the watcher
 #[derive(Debug, Clone)]
 pub enum FileEvent {
@@ -107,6 +123,7 @@ pub struct DocumentSearchState {
     pub matches: Vec<(usize, usize)>,
     pub current_match: Option<usize>,
     cached_content_hash: String,
+    cached_config_hash: u64,
     cached_query: String,
 }
 
@@ -115,6 +132,7 @@ impl DocumentSearchState {
         self.matches.clear();
         self.current_match = None;
         self.cached_content_hash.clear();
+        self.cached_config_hash = 0;
         self.cached_query.clear();
     }
 
@@ -511,12 +529,15 @@ impl AppState {
         }
 
         if self.document_search.cached_content_hash == self.content_hash
+            && self.document_search.cached_config_hash == self.cached_config_hash
             && self.document_search.cached_query == query
         {
             return;
         }
 
-        let haystack = self.content.to_ascii_lowercase();
+        let events = self.get_cached_events();
+        let haystack = build_searchable_document_text(events.iter());
+        let haystack = haystack.to_ascii_lowercase();
         let needle = query.to_ascii_lowercase();
         let matches: Vec<_> = haystack
             .match_indices(&needle)
@@ -530,6 +551,7 @@ impl AppState {
             Some(0)
         };
         self.document_search.cached_content_hash = self.content_hash.clone();
+        self.document_search.cached_config_hash = self.cached_config_hash;
         self.document_search.cached_query = query.to_string();
         self.select_current_search_match();
     }
@@ -956,6 +978,35 @@ mod tests {
         assert_eq!(state.document_search.current_range(), Some((0, 5)));
         assert_eq!(state.text_selection, Some((0, 5)));
         assert_eq!(state.scroll_to_search_match, Some(0));
+    }
+
+    #[test]
+    fn document_search_uses_rendered_text_offsets() {
+        let mut state = state_with_content("**bold** target");
+
+        state.set_document_search_query("target".to_string());
+
+        assert_eq!(state.document_search.matches, vec![(5, 11)]);
+        assert_eq!(state.text_selection, Some((5, 11)));
+        assert_eq!(state.scroll_to_search_match, Some(5));
+    }
+
+    #[test]
+    fn document_search_includes_code_and_table_text() {
+        let mut state = state_with_content(
+            r#"| Name |
+| ---- |
+| needle |
+
+```rust
+let code_needle = true;
+```
+"#,
+        );
+
+        state.set_document_search_query("needle".to_string());
+
+        assert_eq!(state.document_search.matches.len(), 2);
     }
 
     #[test]
