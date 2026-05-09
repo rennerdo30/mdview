@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use pulldown_cmark::Event;
 
@@ -12,6 +13,8 @@ use crate::annotations::AnnotationStore;
 use crate::config::Config;
 use crate::recent::{load_recent_files, save_recent_files, RecentFiles};
 use crate::toc::TocTree;
+
+const RECENT_FILES_CACHE_DURATION: Duration = Duration::from_secs(5);
 
 #[cfg(feature = "plugins")]
 use crate::plugin::LuaRuntime;
@@ -234,6 +237,7 @@ pub struct AppState {
     /// Cached recent files for menu/welcome screen (avoids per-frame allocation)
     /// Contains (path, display_name, parent_dir) tuples
     cached_recent_files: Option<Arc<Vec<(PathBuf, String, String)>>>,
+    cached_recent_files_at: Option<Instant>,
 
     /// Cached config hash for efficient cache validation (avoids recomputing every frame)
     cached_config_hash: u64,
@@ -337,6 +341,7 @@ impl AppState {
             file_deleted: false,
             is_loading: false,
             cached_recent_files: None,
+            cached_recent_files_at: None,
             cached_config_hash: config_hash,
             toc_animation_progress: if toc_initially_visible { 1.0 } else { 0.0 },
             toc_animation_last_time: None,
@@ -634,6 +639,7 @@ impl AppState {
         // Add to recent files and invalidate cache
         self.recent_files.add(&path);
         self.cached_recent_files = None;
+        self.cached_recent_files_at = None;
         if let Err(e) = save_recent_files(&self.recent_files) {
             log::warn!("Failed to save recent files: {}", e);
         }
@@ -926,7 +932,11 @@ impl AppState {
     /// Get cached recent files list for menu and welcome screen
     /// This avoids rebuilding the Vec twice per frame with String allocations
     pub fn get_cached_recent_files(&mut self) -> Arc<Vec<(PathBuf, String, String)>> {
-        if self.cached_recent_files.is_none() {
+        let cache_valid = self
+            .cached_recent_files_at
+            .is_some_and(|cached_at| cached_at.elapsed() < RECENT_FILES_CACHE_DURATION);
+
+        if self.cached_recent_files.is_none() || !cache_valid {
             let files: Vec<_> = self
                 .recent_files
                 .get_existing()
@@ -944,6 +954,7 @@ impl AppState {
                 })
                 .collect();
             self.cached_recent_files = Some(Arc::new(files));
+            self.cached_recent_files_at = Some(Instant::now());
         }
         self.cached_recent_files
             .as_ref()
@@ -954,6 +965,7 @@ impl AppState {
     /// Invalidate the cached recent files (call after adding/removing files)
     pub fn invalidate_recent_files_cache(&mut self) {
         self.cached_recent_files = None;
+        self.cached_recent_files_at = None;
     }
 }
 
