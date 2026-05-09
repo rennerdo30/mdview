@@ -128,7 +128,7 @@ None
   - Examples: `sh`/`shell`/`bash`, `js`/`javascript`, `ts`/`typescript`, `yml`/`yaml`, `c++`/`cpp`.
 
 ### P2: Visual & GUI Regression Testing
-- [ ] Add visual regression/screenshot tests for core UI states.
+- [x] Add visual regression/screenshot tests for core UI states.
   - Welcome screen.
   - Large document with TOC.
   - File browser.
@@ -140,7 +140,7 @@ None
   - Validate that export succeeds and includes expected high-level content.
 
 ### P2: Markdown Styling & Layout QA
-- [ ] Audit rendered Markdown styling against real documents.
+- [x] Audit rendered Markdown styling against real documents.
   - Check heading hierarchy, spacing, line height, paragraph rhythm, and nested block spacing.
   - Check lists, nested lists, task lists, blockquotes, tables, code blocks, inline code, links, images, footnotes, and horizontal rules.
   - Check mixed inline styles such as bold plus italic, links with inline code, strikethrough with annotations, and code inside list items.
@@ -148,17 +148,17 @@ None
   - One dense document with every supported Markdown element.
   - One typography-heavy document with long paragraphs and many heading levels.
   - One edge-case document with long words, long URLs, wide tables, large images, and deeply nested lists.
-- [ ] Verify styling across themes and layout settings.
+- [x] Verify styling across themes and layout settings.
   - Light, dark, sepia, high-contrast, and custom theme overrides.
   - Narrow, comfortable, and full-width reading modes.
   - Minimum, default, and maximum zoom/font sizes.
-- [ ] Fix known visual problem areas.
+- [x] Fix known visual problem areas.
   - Text overlap or clipping.
   - Bad wrapping in tables, list items, inline code, and links.
   - Excessive or missing vertical spacing.
   - Low contrast in code blocks, line numbers, links, annotations, and blockquotes.
   - Image sizing that overflows or creates layout jumps.
-- [ ] Add style-specific screenshot comparisons once fixtures exist.
+- [x] Add style-specific screenshot comparisons once fixtures exist.
   - Capture before/after screenshots for the styling fixture set.
   - Treat visible overlap, clipping, unreadable contrast, and broken wrapping as regressions.
 
