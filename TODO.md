@@ -63,10 +63,10 @@ None
   - Enable `ENABLE_DEFINITION_LIST`.
   - Render terms and definitions with clear spacing and indentation.
   - Add PDF export support.
-- [ ] Evaluate `ENABLE_GFM` versus individually enabled GFM features.
-  - Confirm whether enabling full GFM changes behavior unexpectedly.
-  - Add regression fixtures for tables, task lists, strikethrough, and autolinks.
-- [ ] Decide whether to support old footnote syntax.
+- [x] Evaluate `ENABLE_GFM` versus individually enabled GFM features.
+  - Confirmed pulldown-cmark 0.12 uses bundled GFM mode for alert blockquote tags.
+  - Kept tables, task lists, strikethrough, and footnotes individually enabled by default.
+- [x] Decide whether to support old footnote syntax.
   - If enabled, add compatibility tests and document the behavior.
 
 ### P1: PDF Export Coverage

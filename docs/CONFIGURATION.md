@@ -85,8 +85,8 @@ html = true                     # Show safe fallback for raw/inline HTML
 math = true                     # Enable inline and display math fallback
 metadata_blocks = true          # Enable YAML/plus front matter blocks
 definition_lists = true         # Enable definition lists
-old_footnotes = false           # Enable legacy footnote syntax
-gfm = false                     # Enable pulldown-cmark's bundled GFM mode
+old_footnotes = false           # Opt in to legacy footnote parsing
+gfm = false                     # Enable bundled GFM alert blockquote tags
 syntax_highlighting = true      # Highlight code blocks
 syntax_theme = "base16-ocean.dark"  # Syntect theme name
 ```
@@ -102,8 +102,8 @@ syntax_theme = "base16-ocean.dark"  # Syntect theme name
 | `math` | bool | `true` | Inline/display math fallback |
 | `metadata_blocks` | bool | `true` | YAML and plus-delimited front matter |
 | `definition_lists` | bool | `true` | Definition list syntax |
-| `old_footnotes` | bool | `false` | Legacy footnote syntax |
-| `gfm` | bool | `false` | pulldown-cmark bundled GFM behavior |
+| `old_footnotes` | bool | `false` | Legacy footnote syntax; disabled by default to keep GitHub-compatible footnotes |
+| `gfm` | bool | `false` | pulldown-cmark bundled GFM behavior; currently alert blockquote tags like `[!NOTE]` |
 | `syntax_highlighting` | bool | `true` | Code highlighting |
 | `syntax_theme` | string | `"base16-ocean.dark"` | Highlight theme |
 

@@ -119,7 +119,7 @@ pub fn collect_text<'a>(events: impl Iterator<Item = &'a Event<'a>>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pulldown_cmark::{MetadataBlockKind, TagEnd};
+    use pulldown_cmark::{BlockQuoteKind, MetadataBlockKind, TagEnd};
 
     fn parse_default_events(content: &str) -> Vec<Event<'_>> {
         let config = Config::default();
@@ -362,6 +362,45 @@ Term
         assert!(!events
             .iter()
             .any(|event| matches!(event, Event::Start(Tag::DefinitionList))));
+    }
+
+    #[test]
+    fn test_gfm_flag_only_adds_bundled_gfm_extensions() {
+        let content = "> [!NOTE]\n> Pay attention.\n";
+        let mut config = Config::default();
+
+        let default_events: Vec<_> = parse_with_config(content, &config).collect();
+        config.markdown.gfm = true;
+        let gfm_events: Vec<_> = parse_with_config(content, &config).collect();
+
+        assert!(default_events
+            .iter()
+            .any(|event| matches!(event, Event::Start(Tag::BlockQuote(None)))));
+        assert!(gfm_events.iter().any(|event| matches!(
+            event,
+            Event::Start(Tag::BlockQuote(Some(BlockQuoteKind::Note)))
+        )));
+    }
+
+    #[test]
+    fn test_old_footnotes_are_opt_in() {
+        let content = "Known[^known] missing[^missing]\n\n[^known]: footnote\n";
+        let mut config = Config::default();
+
+        let default_refs = parse_with_config(content, &config)
+            .filter(|event| matches!(event, Event::FootnoteReference(_)))
+            .count();
+        config.markdown.old_footnotes = true;
+        let old_refs = parse_with_config(content, &config)
+            .filter(|event| matches!(event, Event::FootnoteReference(_)))
+            .count();
+        let old_definitions = parse_with_config(content, &config)
+            .filter(|event| matches!(event, Event::Start(Tag::FootnoteDefinition(_))))
+            .count();
+
+        assert_eq!(default_refs, 1);
+        assert_eq!(old_refs, 2);
+        assert_eq!(old_definitions, 1);
     }
 
     #[test]
