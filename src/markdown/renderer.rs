@@ -291,6 +291,17 @@ struct MixedContentStyle {
     in_strikethrough: bool,
 }
 
+/// One-frame navigation targets for markdown rendering.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RenderTargets {
+    /// Heading index to scroll to from TOC navigation.
+    pub heading: Option<usize>,
+    /// Document byte offset to scroll to from full-document search.
+    pub search_offset: Option<usize>,
+    /// Active search range to highlight.
+    pub active_search_range: Option<(usize, usize)>,
+}
+
 /// Pre-compute block boundaries from a pulldown-cmark event stream.
 /// This allows the renderer to skip entire blocks that are off-screen without
 /// processing any of their events through the state machine.
@@ -777,6 +788,12 @@ pub struct MarkdownRenderer {
     /// Target heading index to scroll to (for TOC navigation)
     scroll_target: Option<usize>,
 
+    /// Target document byte offset to scroll to (for document search navigation)
+    search_target: Option<usize>,
+
+    /// Active document search match to emphasize while rendering
+    active_search_range: Option<(usize, usize)>,
+
     /// Current heading index counter (for matching scroll target)
     heading_index: usize,
 
@@ -873,6 +890,8 @@ impl MarkdownRenderer {
             char_offset: 0,
             paragraph_start_offset: None,
             scroll_target: None,
+            search_target: None,
+            active_search_range: None,
             heading_index: 0,
             table_count: 0,
             code_block_count: 0,
@@ -1325,11 +1344,15 @@ impl MarkdownRenderer {
         annotations: &AnnotationStore,
         heading_positions: &mut Vec<f32>,
         config: &Config,
-        scroll_target: Option<usize>,
+        targets: RenderTargets,
     ) {
-        self.scroll_target = scroll_target;
+        self.scroll_target = targets.heading;
+        self.search_target = targets.search_offset;
+        self.active_search_range = targets.active_search_range;
         self.render(ui, events, annotations, heading_positions, config);
         self.scroll_target = None;
+        self.search_target = None;
+        self.active_search_range = None;
     }
 
     pub fn render(
@@ -1408,6 +1431,8 @@ impl MarkdownRenderer {
 
         for (block_idx, block) in block_map.iter_mut().enumerate() {
             let cursor_y = ui.cursor().top();
+            let block_start_offset = self.char_offset;
+            let block_end_offset = block_start_offset.saturating_add(block.text_byte_len);
 
             // Use actual measured height when available, otherwise estimated
             let block_height = block.height();
@@ -1426,10 +1451,14 @@ impl MarkdownRenderer {
             let is_below_viewport = cursor_y > viewport_bottom + effective_buffer;
 
             // Special cases: always process headings (for TOC positions), footnote definitions,
-            // and the block containing a scroll target heading
+            // and blocks containing scroll/search targets.
             let is_scroll_target_block = scroll_target_block_idx == Some(block_idx);
+            let is_search_target_block = self
+                .search_target
+                .is_some_and(|target| target >= block_start_offset && target <= block_end_offset);
             let must_process = block.is_heading
                 || is_scroll_target_block
+                || is_search_target_block
                 || matches!(
                     events.get(block.event_start),
                     Some(Event::Start(Tag::FootnoteDefinition(_)))
@@ -1446,6 +1475,13 @@ impl MarkdownRenderer {
 
             // Record cursor position before rendering this block for height measurement
             let pre_render_y = ui.cursor().top();
+            if is_search_target_block {
+                let animation = egui::style::ScrollAnimation {
+                    points_per_second: 800.0,
+                    duration: egui::emath::Rangef::new(0.2, 0.4),
+                };
+                ui.scroll_to_cursor_animation(Some(egui::Align::Center), animation);
+            }
 
             // Process all events in this block normally
             for event in &events[block.event_start..block.event_end] {
@@ -2062,6 +2098,13 @@ impl MarkdownRenderer {
             }
         }
 
+        if let Some((search_start, search_end)) = self.active_search_range {
+            if search_start < end_offset && search_end > start_offset {
+                boundaries.push(search_start.clamp(start_offset, end_offset));
+                boundaries.push(search_end.clamp(start_offset, end_offset));
+            }
+        }
+
         boundaries.sort_unstable();
         boundaries.dedup();
 
@@ -2085,10 +2128,19 @@ impl MarkdownRenderer {
 
             let highlight = annotation_highlight_color(annotations, run_start);
             let note_here = annotation_has_note(annotations, run_start);
+            let search_hit = self
+                .active_search_range
+                .is_some_and(|(start, end)| run_start < end && run_end > start);
 
             let mut rich = RichText::new(run_text).size(base_font_size);
             if let Some(bg_color) = highlight {
                 rich = rich.background_color(bg_color);
+            } else if search_hit {
+                rich = rich.background_color(if ui.visuals().dark_mode {
+                    Color32::from_rgb(106, 85, 28)
+                } else {
+                    Color32::from_rgb(255, 228, 130)
+                });
             }
             if note_here {
                 rich = rich.underline();
@@ -2122,7 +2174,14 @@ impl MarkdownRenderer {
             || text.contains(FOOTNOTE_MARKER)
             || text.contains(LINK_MARKER)
             || text.contains(LINK_END_MARKER);
-        if annotations.is_empty() && !has_special_markers && !style.in_strikethrough {
+        let has_active_search = self.active_search_range.is_some_and(|(start, end)| {
+            start < style.start_offset + text.len() && end > style.start_offset
+        });
+        if annotations.is_empty()
+            && !has_active_search
+            && !has_special_markers
+            && !style.in_strikethrough
+        {
             ui.horizontal_wrapped(|ui| {
                 self.add_label_with_hit(
                     ui,
@@ -2139,6 +2198,7 @@ impl MarkdownRenderer {
 
         // Fast path: no annotations, no footnotes, but has inline code - minimal processing
         if annotations.is_empty()
+            && !has_active_search
             && !text.contains(FOOTNOTE_MARKER)
             && !text.contains(LINK_MARKER)
             && !text.contains(LINK_END_MARKER)

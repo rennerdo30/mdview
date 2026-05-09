@@ -99,12 +99,12 @@ None
   - Profile before further optimization.
 
 ### P1: Search & Navigation
-- [ ] Add full-document search.
+- [x] Add full-document search.
   - Search body text, headings, code blocks, and table text.
   - Provide next/previous navigation.
-  - Highlight matches without tanking scroll performance.
-  - Integrate with TOC search where appropriate.
-- [ ] Add search result indexing/cache invalidation.
+  - Highlight the active match without tanking scroll performance.
+  - Keep TOC search separate; document search covers the rendered document body.
+- [x] Add search result indexing/cache invalidation.
   - Invalidate on content change and relevant config changes.
   - Avoid rebuilding indexes every frame.
 

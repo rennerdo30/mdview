@@ -180,6 +180,7 @@ margin = 20             # Margin in mm
 ```toml
 [keybindings]
 toggle_toc = "Ctrl+T"   # Toggle TOC sidebar
+document_search = "Ctrl+Shift+F" # Find in document
 export_pdf = "Ctrl+P"   # Export to PDF
 reload = "F5"           # Reload file
 open_file = "Ctrl+O"    # Open file dialog
@@ -189,6 +190,7 @@ quit = "Ctrl+Q"         # Quit application
 | Option | Default | Description |
 |--------|---------|-------------|
 | `toggle_toc` | `"Ctrl+T"` | Toggle TOC |
+| `document_search` | `"Ctrl+Shift+F"` | Find in document |
 | `export_pdf` | `"Ctrl+P"` | Export PDF |
 | `reload` | `"F5"` | Reload file |
 | `open_file` | `"Ctrl+O"` | Open file |
@@ -298,6 +300,7 @@ margin = 20
 
 [keybindings]
 toggle_toc = "Ctrl+T"
+document_search = "Ctrl+Shift+F"
 export_pdf = "Ctrl+P"
 reload = "F5"
 open_file = "Ctrl+O"

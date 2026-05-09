@@ -123,6 +123,7 @@ components.
 |----------|--------|
 | `Ctrl+O` | Open file |
 | `Ctrl+T` | Toggle TOC sidebar |
+| `Ctrl+Shift+F` | Find in document |
 | `Ctrl+P` | Export to PDF |
 | `F5` | Reload file |
 | `Ctrl+R` | Reload file (alternative) |
@@ -240,6 +241,7 @@ margin = 20
 
 [keybindings]
 toggle_toc = "Ctrl+T"
+document_search = "Ctrl+Shift+F"
 export_pdf = "Ctrl+P"
 reload = "F5"
 ```

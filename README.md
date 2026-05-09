@@ -52,6 +52,7 @@ Markdown-like text; JSX/ESM blocks are not rendered as live MDX components.
 |----------|--------|
 | `Ctrl+O` | Open file |
 | `Ctrl+T` | Toggle TOC |
+| `Ctrl+Shift+F` | Find in document |
 | `Ctrl+P` | Export PDF |
 | `F5` | Reload file |
 | `Ctrl+Q` | Quit |

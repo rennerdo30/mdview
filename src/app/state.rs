@@ -101,6 +101,29 @@ pub enum FileEvent {
     Error(String),
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct DocumentSearchState {
+    pub query: String,
+    pub matches: Vec<(usize, usize)>,
+    pub current_match: Option<usize>,
+    cached_content_hash: String,
+    cached_query: String,
+}
+
+impl DocumentSearchState {
+    fn clear_results(&mut self) {
+        self.matches.clear();
+        self.current_match = None;
+        self.cached_content_hash.clear();
+        self.cached_query.clear();
+    }
+
+    pub fn current_range(&self) -> Option<(usize, usize)> {
+        self.current_match
+            .and_then(|idx| self.matches.get(idx).copied())
+    }
+}
+
 /// Application state
 pub struct AppState {
     /// Currently opened file path
@@ -160,6 +183,12 @@ pub struct AppState {
 
     /// Target heading index to scroll to (set by TOC clicks)
     pub scroll_to_heading: Option<usize>,
+
+    /// Target byte offset to scroll to (set by full-document search)
+    pub scroll_to_search_match: Option<usize>,
+
+    /// Full-document search state
+    pub document_search: DocumentSearchState,
 
     /// Recently opened files
     pub recent_files: RecentFiles,
@@ -278,6 +307,8 @@ impl AppState {
             heading_positions: Vec::new(),
             visible_char_range: None,
             scroll_to_heading: None,
+            scroll_to_search_match: None,
+            document_search: DocumentSearchState::default(),
             recent_files,
             show_recent_files: false,
             #[cfg(feature = "plugins")]
@@ -459,6 +490,74 @@ impl AppState {
         self.status_message = Some((message.into(), std::time::Instant::now()));
     }
 
+    pub fn set_document_search_query(&mut self, query: String) {
+        if self.document_search.query != query {
+            self.document_search.query = query;
+            self.update_document_search();
+        }
+    }
+
+    pub fn update_document_search(&mut self) {
+        let query = self.document_search.query.trim().to_string();
+        if query.is_empty() {
+            self.document_search.clear_results();
+            return;
+        }
+
+        if self.document_search.cached_content_hash == self.content_hash
+            && self.document_search.cached_query == query
+        {
+            return;
+        }
+
+        let haystack = self.content.to_ascii_lowercase();
+        let needle = query.to_ascii_lowercase();
+        let matches: Vec<_> = haystack
+            .match_indices(&needle)
+            .map(|(start, matched)| (start, start + matched.len()))
+            .collect();
+
+        self.document_search.matches = matches;
+        self.document_search.current_match = if self.document_search.matches.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+        self.document_search.cached_content_hash = self.content_hash.clone();
+        self.document_search.cached_query = query.to_string();
+        self.select_current_search_match();
+    }
+
+    pub fn select_current_search_match(&mut self) {
+        if let Some((start, end)) = self.document_search.current_range() {
+            self.text_selection = Some((start, end));
+            self.scroll_to_search_match = Some(start);
+        } else {
+            self.text_selection = None;
+            self.scroll_to_search_match = None;
+        }
+    }
+
+    pub fn next_search_match(&mut self) {
+        if self.document_search.matches.is_empty() {
+            return;
+        }
+        let current = self.document_search.current_match.unwrap_or(0);
+        self.document_search.current_match =
+            Some((current + 1) % self.document_search.matches.len());
+        self.select_current_search_match();
+    }
+
+    pub fn previous_search_match(&mut self) {
+        if self.document_search.matches.is_empty() {
+            return;
+        }
+        let current = self.document_search.current_match.unwrap_or(0);
+        let len = self.document_search.matches.len();
+        self.document_search.current_match = Some((current + len - 1) % len);
+        self.select_current_search_match();
+    }
+
     /// Duration in seconds before status messages auto-clear
     const STATUS_MESSAGE_DURATION_SECS: u64 = 3;
 
@@ -526,6 +625,8 @@ impl AppState {
         self.file_deleted = false;
         self.is_loading = false;
         self.text_selection = None;
+        self.scroll_to_search_match = None;
+        self.update_document_search();
         self.creating_annotation = false;
         self.pending_note_text.clear();
 
@@ -556,6 +657,9 @@ impl AppState {
         self.annotations = AnnotationStore::new();
         self.heading_positions.clear();
         self.visible_char_range = None;
+        self.text_selection = None;
+        self.scroll_to_search_match = None;
+        self.document_search.clear_results();
     }
 
     /// Reload the current file (preserving scroll position)
@@ -819,5 +923,46 @@ impl AppState {
     /// Invalidate the cached recent files (call after adding/removing files)
     pub fn invalidate_recent_files_cache(&mut self) {
         self.cached_recent_files = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with_content(content: &str) -> AppState {
+        let mut state = AppState::new(Config::default());
+        state.content = Arc::new(content.to_string());
+        state.content_hash = compute_content_hash(content);
+        state
+    }
+
+    #[test]
+    fn document_search_finds_case_insensitive_matches() {
+        let mut state = state_with_content("Alpha beta alpha");
+
+        state.set_document_search_query("alpha".to_string());
+
+        assert_eq!(state.document_search.matches, vec![(0, 5), (11, 16)]);
+        assert_eq!(state.document_search.current_range(), Some((0, 5)));
+        assert_eq!(state.text_selection, Some((0, 5)));
+        assert_eq!(state.scroll_to_search_match, Some(0));
+    }
+
+    #[test]
+    fn document_search_navigates_and_clears_results() {
+        let mut state = state_with_content("one two one");
+        state.set_document_search_query("one".to_string());
+
+        state.next_search_match();
+        assert_eq!(state.document_search.current_range(), Some((8, 11)));
+        assert_eq!(state.text_selection, Some((8, 11)));
+
+        state.previous_search_match();
+        assert_eq!(state.document_search.current_range(), Some((0, 3)));
+
+        state.set_document_search_query(String::new());
+        assert!(state.document_search.matches.is_empty());
+        assert_eq!(state.document_search.current_match, None);
     }
 }

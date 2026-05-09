@@ -30,6 +30,7 @@ struct CachedKeybindings {
     add_annotation: Option<ParsedKeybinding>,
     add_bookmark: Option<ParsedKeybinding>,
     focus_toc_search: Option<ParsedKeybinding>,
+    document_search: Option<ParsedKeybinding>,
     zoom_in: Option<ParsedKeybinding>,
     zoom_out: Option<ParsedKeybinding>,
     zoom_reset: Option<ParsedKeybinding>,
@@ -63,6 +64,7 @@ impl CachedKeybindings {
             add_annotation: parse_keybinding(&config.add_annotation),
             add_bookmark: parse_keybinding(&config.add_bookmark),
             focus_toc_search: parse_keybinding(&config.focus_toc_search),
+            document_search: parse_keybinding(&config.document_search),
             zoom_in: parse_keybinding(&config.zoom_in),
             zoom_out: parse_keybinding(&config.zoom_out),
             zoom_reset: parse_keybinding(&config.zoom_reset),
@@ -316,7 +318,7 @@ mod shortcuts {
 use crate::annotations::ui::{AnnotationAction, AnnotationPopup};
 use crate::app::file_browser::{rfd_open_folder, FileBrowserPanel};
 use crate::config::Config;
-use crate::markdown::renderer::MarkdownRenderer;
+use crate::markdown::renderer::{MarkdownRenderer, RenderTargets};
 use crate::theme::style::{create_style, palette};
 use crate::toc::panel::TocPanel;
 use crate::update::UpdateChecker;
@@ -348,6 +350,10 @@ pub struct MdViewApp {
     show_help_dialog: bool,
     /// Whether to show the About dialog
     show_about_dialog: bool,
+    /// Whether to show the full-document search bar
+    show_document_search: bool,
+    /// Request focus for the search input on the next search bar frame
+    document_search_focus_pending: bool,
     /// Native menu bar (macOS/Windows/Linux)
     native_menu: Option<crate::native_menu::NativeMenuBar>,
     /// Cached result of is_default_handler check (to avoid spawning processes every frame)
@@ -450,6 +456,8 @@ impl MdViewApp {
             show_update_dialog: false,
             show_help_dialog: false,
             show_about_dialog: false,
+            show_document_search: false,
+            document_search_focus_pending: false,
             native_menu: None,
             cached_is_default_handler: None,
             cached_keybindings,
@@ -826,6 +834,10 @@ impl MdViewApp {
 
                         ui.label("Toggle contents");
                         ui.monospace(&kb.toggle_toc);
+                        ui.end_row();
+
+                        ui.label("Find in document");
+                        ui.monospace(&kb.document_search);
                         ui.end_row();
 
                         ui.label("Toggle file browser");
@@ -1228,6 +1240,7 @@ impl MdViewApp {
             add_annotation,
             add_bookmark,
             focus_toc_search,
+            document_search,
             zoom_in,
             zoom_out,
             zoom_reset,
@@ -1252,6 +1265,7 @@ impl MdViewApp {
                 check(&kb.add_annotation),
                 check(&kb.add_bookmark),
                 check(&kb.focus_toc_search),
+                check(&kb.document_search),
                 check(&kb.zoom_in),
                 check(&kb.zoom_out),
                 check(&kb.zoom_reset),
@@ -1356,6 +1370,12 @@ impl MdViewApp {
             self.toc_panel.focus_search();
         }
 
+        if document_search {
+            self.show_document_search = true;
+            self.document_search_focus_pending = true;
+            self.state.update_document_search();
+        }
+
         if zoom_in {
             self.apply_zoom_delta(ctx, 1.0);
         }
@@ -1374,6 +1394,8 @@ impl MdViewApp {
                 self.annotation_popup.hide();
             } else if self.state.creating_annotation {
                 self.state.creating_annotation = false;
+            } else if self.show_document_search {
+                self.show_document_search = false;
             } else if self.state.text_selection.is_some() {
                 self.state.text_selection = None;
                 self.selection_drag_anchor = None;
@@ -2088,6 +2110,94 @@ impl MdViewApp {
             });
     }
 
+    fn render_document_search_bar(&mut self, ctx: &egui::Context) {
+        if !self.show_document_search {
+            return;
+        }
+
+        let is_dark = ctx.style().visuals.dark_mode;
+        let panel_bg = if is_dark {
+            palette::BG_DARK
+        } else {
+            palette::light::BG_SIDEBAR
+        };
+        let border_color = if is_dark {
+            palette::BORDER_SUBTLE
+        } else {
+            palette::light::BORDER_SUBTLE
+        };
+        let text_muted = if is_dark {
+            palette::TEXT_MUTED
+        } else {
+            palette::light::TEXT_MUTED
+        };
+
+        egui::TopBottomPanel::top("document_search_bar")
+            .frame(
+                egui::Frame::none()
+                    .fill(panel_bg)
+                    .inner_margin(egui::Margin::symmetric(16.0, 8.0))
+                    .stroke(Stroke::new(1.0, border_color)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Find")
+                            .color(text_muted)
+                            .small()
+                            .strong(),
+                    );
+
+                    let mut query = self.state.document_search.query.clone();
+                    let response = ui.add_sized(
+                        [260.0, 24.0],
+                        egui::TextEdit::singleline(&mut query).hint_text("Search document"),
+                    );
+                    if self.document_search_focus_pending {
+                        response.request_focus();
+                        self.document_search_focus_pending = false;
+                    }
+                    if response.changed() {
+                        self.state.set_document_search_query(query);
+                    }
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                        self.state.next_search_match();
+                    }
+
+                    let total = self.state.document_search.matches.len();
+                    let current = self
+                        .state
+                        .document_search
+                        .current_match
+                        .map(|idx| idx + 1)
+                        .unwrap_or(0);
+                    ui.label(
+                        egui::RichText::new(format!("{}/{}", current, total))
+                            .color(text_muted)
+                            .small(),
+                    );
+
+                    let can_navigate = total > 0;
+                    if ui
+                        .add_enabled(can_navigate, egui::Button::new("Prev"))
+                        .clicked()
+                    {
+                        self.state.previous_search_match();
+                    }
+                    if ui
+                        .add_enabled(can_navigate, egui::Button::new("Next"))
+                        .clicked()
+                    {
+                        self.state.next_search_match();
+                    }
+                    if ui.button("Close").clicked() {
+                        self.show_document_search = false;
+                        self.document_search_focus_pending = false;
+                    }
+                });
+            });
+    }
+
     fn render_toc_sidebar(&mut self, ctx: &egui::Context) {
         const TOC_MIN_WIDTH: f32 = 180.0;
         const TOC_MAX_WIDTH: f32 = 400.0;
@@ -2341,6 +2451,8 @@ impl MdViewApp {
                 let mut heading_positions = std::mem::take(&mut self.state.heading_positions);
                 heading_positions.clear();
                 let scroll_target = self.state.scroll_to_heading.take();
+                let search_target = self.state.scroll_to_search_match.take();
+                let active_search_range = self.state.document_search.current_range();
 
                 let scroll_output = egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -2358,7 +2470,11 @@ impl MdViewApp {
                                     annotations,
                                     &mut heading_positions,
                                     config,
-                                    scroll_target,
+                                    RenderTargets {
+                                        heading: scroll_target,
+                                        search_offset: search_target,
+                                        active_search_range,
+                                    },
                                 );
                             });
                         });
@@ -2952,6 +3068,7 @@ impl eframe::App for MdViewApp {
         if self.native_menu.is_none() {
             self.render_menu_bar(ctx);
         }
+        self.render_document_search_bar(ctx);
         self.render_status_bar(ctx);
         self.render_toc_sidebar(ctx);
         self.render_file_browser_sidebar(ctx);
