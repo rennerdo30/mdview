@@ -183,7 +183,7 @@ None
   - Run `cargo check --all-features`.
   - Run `cargo clippy --all-targets --all-features -- -D warnings`.
   - Run `cargo test --all-features`.
-- [ ] Periodically review duplicate transitive dependencies.
+- [x] Periodically review duplicate transitive dependencies.
   - Track `cargo tree -d`.
   - Avoid large migrations unless they reduce risk or improve performance.
 
