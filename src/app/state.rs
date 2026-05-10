@@ -128,6 +128,7 @@ pub struct DocumentSearchState {
     cached_content_hash: String,
     cached_config_hash: u64,
     cached_query: String,
+    cached_search_text: String,
 }
 
 impl DocumentSearchState {
@@ -137,6 +138,7 @@ impl DocumentSearchState {
         self.cached_content_hash.clear();
         self.cached_config_hash = 0;
         self.cached_query.clear();
+        self.cached_search_text.clear();
     }
 
     pub fn current_range(&self) -> Option<(usize, usize)> {
@@ -540,9 +542,17 @@ impl AppState {
             return;
         }
 
-        let events = self.get_cached_events();
-        let haystack = build_searchable_document_text(events.iter());
-        let haystack = haystack.to_ascii_lowercase();
+        if self.document_search.cached_content_hash != self.content_hash
+            || self.document_search.cached_config_hash != self.cached_config_hash
+        {
+            let events = self.get_cached_events();
+            self.document_search.cached_search_text =
+                build_searchable_document_text(events.iter()).to_ascii_lowercase();
+            self.document_search.cached_content_hash = self.content_hash.clone();
+            self.document_search.cached_config_hash = self.cached_config_hash;
+        }
+
+        let haystack = &self.document_search.cached_search_text;
         let needle = query.to_ascii_lowercase();
         let matches: Vec<_> = haystack
             .match_indices(&needle)
@@ -555,8 +565,6 @@ impl AppState {
         } else {
             Some(0)
         };
-        self.document_search.cached_content_hash = self.content_hash.clone();
-        self.document_search.cached_config_hash = self.cached_config_hash;
         self.document_search.cached_query = query.to_string();
         self.select_current_search_match();
     }
