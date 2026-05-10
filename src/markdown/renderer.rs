@@ -3806,11 +3806,24 @@ fn normalize_language_token(language: Option<&str>) -> Option<Cow<'_, str>> {
         "typescript" | "ts" | "mts" | "cts" | "jsx" | "tsx" => "javascript",
         "yml" => "yaml",
         "c++" | "cc" | "cxx" | "hpp" | "hxx" => "cpp",
+        "c#" | "csharp" => "cs",
+        "obj-c" | "objc" => "objective-c",
+        "docker" => "dockerfile",
+        "make" => "makefile",
         "golang" => "go",
         "rs" => "rust",
         "py" => "python",
+        "kt" | "kts" => "kotlin",
+        "swiftlang" => "swift",
         "rb" => "ruby",
         "ps1" | "powershell" => "powershell",
+        "pl" => "perl",
+        "rstats" => "r",
+        "viml" | "vimscript" => "vim",
+        "hs" => "haskell",
+        "erl" => "erlang",
+        "ex" | "exs" => "elixir",
+        "clj" | "cljs" => "clojure",
         "md" | "mdown" | "mkd" => "markdown",
         "html" | "htm" => "html",
         "css" => "css",
@@ -4440,19 +4453,32 @@ Raw HTML
             ("golang", "go"),
             ("c", "c"),
             ("c++", "cpp"),
+            ("csharp", "cs"),
+            ("c#", "cs"),
+            ("objc", "objective-c"),
             ("java", "java"),
+            ("kts", "kotlin"),
+            ("swiftlang", "swift"),
+            ("docker", "dockerfile"),
+            ("make", "makefile"),
             ("toml", "toml"),
             ("yaml", "yaml"),
             ("yml", "yaml"),
             ("json", "json"),
             ("bash", "bash"),
             ("sh", "bash"),
+            ("ps1", "powershell"),
             ("sql", "sql"),
             ("html", "html"),
             ("css", "css"),
             ("markdown", "markdown"),
             ("md", "markdown"),
             ("diff", "diff"),
+            ("rstats", "r"),
+            ("vimscript", "vim"),
+            ("hs", "haskell"),
+            ("exs", "elixir"),
+            ("cljs", "clojure"),
         ];
 
         for (input, expected) in cases {
@@ -4460,6 +4486,27 @@ Raw HTML
                 normalize_language_token(Some(input)).as_deref(),
                 Some(expected),
                 "{input} should normalize to {expected}"
+            );
+        }
+    }
+
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn test_common_aliases_resolve_to_syntect_syntaxes() {
+        use syntect::parsing::SyntaxSet;
+
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let aliases = ["csharp", "make", "rb", "pl", "hs"];
+
+        for alias in aliases {
+            let normalized = normalize_language_token(Some(alias));
+            let syntax = normalized
+                .as_deref()
+                .and_then(|language| syntax_set.find_syntax_by_token(language))
+                .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+            assert_ne!(
+                syntax.name, "Plain Text",
+                "{alias} should resolve to a concrete syntect syntax"
             );
         }
     }
