@@ -24,86 +24,86 @@ These commands must pass for every user story:
 As a user, I want large markdown files (5000+ lines) to render quickly so that I don't wait when opening documents.
 
 **Acceptance Criteria:**
-- [ ] Profile the current rendering pipeline to identify bottlenecks
-- [ ] Optimize the pulldown-cmark event processing in `markdown/renderer.rs`
-- [ ] Reduce unnecessary widget allocations during initial render
-- [ ] Large files (5000+ lines) should feel noticeably faster to open
+- [x] Profile the current rendering pipeline to identify bottlenecks
+- [x] Optimize the pulldown-cmark event processing in `markdown/renderer.rs`
+- [x] Reduce unnecessary widget allocations during initial render
+- [x] Large files (5000+ lines) should feel noticeably faster to open
 
 ### US-002: Optimize scrolling performance for large documents
 As a user, I want smooth scrolling through large rendered documents without stutter or frame drops.
 
 **Acceptance Criteria:**
-- [ ] Profile scroll performance with a 5000+ line rendered document
-- [ ] Reduce per-frame work during scroll (avoid re-layout of off-screen content where possible)
-- [ ] Ensure egui repaints are efficient (minimize unnecessary repaints)
-- [ ] Scrolling feels smooth on documents with 10000+ lines
+- [x] Profile scroll performance with a 5000+ line rendered document
+- [x] Reduce per-frame work during scroll (avoid re-layout of off-screen content where possible)
+- [x] Ensure egui repaints are efficient (minimize unnecessary repaints)
+- [x] Scrolling feels smooth on documents with 10000+ lines
 
 ### US-003: Implement viewport-aware rendering
 As a user, I want the app to prioritize rendering what's visible on screen so that perceived performance is optimal regardless of file size.
 
 **Acceptance Criteria:**
-- [ ] Only render markdown elements that are in or near the current viewport
-- [ ] Off-screen content is rendered lazily as the user scrolls
-- [ ] Scroll position and document height remain accurate
-- [ ] Jumping to a TOC heading still works correctly with lazy rendering
+- [x] Only render markdown elements that are in or near the current viewport
+- [x] Off-screen content is rendered lazily as the user scrolls
+- [x] Scroll position and document height remain accurate
+- [x] Jumping to a TOC heading still works correctly with lazy rendering
 
 ### US-004: Add search/filter to the TOC panel
 As a user, I want to search within the table of contents so that I can quickly find sections in large documents.
 
 **Acceptance Criteria:**
-- [ ] Add a text input field at the top of the TOC panel
-- [ ] Typing filters headings in real-time (whatever feels most natural — fuzzy or substring)
-- [ ] Non-matching headings are hidden or dimmed
-- [ ] Clearing the search restores the full TOC
-- [ ] Clicking a filtered result navigates to that section
-- [ ] Filter field is accessible via keyboard shortcut
+- [x] Add a text input field at the top of the TOC panel
+- [x] Typing filters headings in real-time (whatever feels most natural — fuzzy or substring)
+- [x] Non-matching headings are hidden or dimmed
+- [x] Clearing the search restores the full TOC
+- [x] Clicking a filtered result navigates to that section
+- [x] Filter field is accessible via keyboard shortcut
 
 ### US-005: Improve typography hierarchy and readability
 As a user, I want clear visual distinction between heading levels and comfortable reading spacing so that documents are easy to scan and read.
 
 **Acceptance Criteria:**
-- [ ] Increase size/weight contrast between H1-H6 headings
-- [ ] Improve line height and paragraph spacing for body text
-- [ ] Add configurable font size (zoom in/out via keyboard shortcut or menu)
-- [ ] Typography changes respect the current theme (light/dark)
-- [ ] Zoom level persists in config
+- [x] Increase size/weight contrast between H1-H6 headings
+- [x] Improve line height and paragraph spacing for body text
+- [x] Add configurable font size (zoom in/out via keyboard shortcut or menu)
+- [x] Typography changes respect the current theme (light/dark)
+- [x] Zoom level persists in config
 
 ### US-006: Add smooth scrolling for TOC navigation
 As a user, I want smooth animated scrolling when clicking a TOC entry so that I maintain spatial context.
 
 **Acceptance Criteria:**
-- [ ] Clicking a TOC entry smoothly scrolls to the target heading (not an instant jump)
-- [ ] Animation duration is reasonable (~200-400ms)
-- [ ] Smooth scroll can be interrupted by user input (manual scroll, another click)
-- [ ] Works correctly with viewport-aware rendering (US-003)
+- [x] Clicking a TOC entry smoothly scrolls to the target heading (not an instant jump)
+- [x] Animation duration is reasonable (~200-400ms)
+- [x] Smooth scroll can be interrupted by user input (manual scroll, another click)
+- [x] Works correctly with viewport-aware rendering (US-003)
 
 ### US-007: Add animated TOC panel open/close
 As a user, I want the TOC panel to open and close with a smooth animation so the UI feels polished.
 
 **Acceptance Criteria:**
-- [ ] TOC panel slides in/out when toggled
-- [ ] Animation is smooth and doesn't cause layout jank
-- [ ] Content area resizes smoothly alongside the panel
-- [ ] Animation duration is short (~150-250ms)
+- [x] TOC panel slides in/out when toggled
+- [x] Animation is smooth and doesn't cause layout jank
+- [x] Content area resizes smoothly alongside the panel
+- [x] Animation duration is short (~150-250ms)
 
 ### US-008: Add fade transitions when switching files
 As a user, I want a subtle fade transition when switching between files so the experience feels smooth rather than jarring.
 
 **Acceptance Criteria:**
-- [ ] Switching files shows a brief fade-out/fade-in transition
-- [ ] Transition is fast enough to not feel slow (~150-200ms)
-- [ ] Transition does not block user input
-- [ ] Works correctly with file browser and recent files
+- [x] Switching files shows a brief fade-out/fade-in transition
+- [x] Transition is fast enough to not feel slow (~150-200ms)
+- [x] Transition does not block user input
+- [x] Works correctly with file browser and recent files
 
 ### US-009: Improve syntax highlighting in code blocks
 As a user, I want better syntax highlighting with more language support, theme-aware colors, and line numbers so that code blocks are easy to read.
 
 **Acceptance Criteria:**
-- [ ] Add support for more languages (at minimum: Rust, Python, JavaScript, TypeScript, Go, C/C++, Java, TOML, YAML, JSON, Bash, SQL)
-- [ ] Syntax highlighting colors adapt to the current theme (light/dark)
-- [ ] Add optional line numbers in code blocks
-- [ ] Line numbers can be toggled via config setting
-- [ ] Code block rendering performance does not regress
+- [x] Add support for more languages (at minimum: Rust, Python, JavaScript, TypeScript, Go, C/C++, Java, TOML, YAML, JSON, Bash, SQL)
+- [x] Syntax highlighting colors adapt to the current theme (light/dark)
+- [x] Add optional line numbers in code blocks
+- [x] Line numbers can be toggled via config setting
+- [x] Code block rendering performance does not regress
 
 ## Functional Requirements
 - FR-1: The rendering pipeline must handle files of 10000+ lines without noticeable lag on initial open
