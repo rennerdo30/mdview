@@ -1509,14 +1509,14 @@ impl MarkdownRenderer {
             let is_above_viewport = cursor_y + block_height < viewport_top - effective_buffer;
             let is_below_viewport = cursor_y > viewport_bottom + effective_buffer;
 
-            // Special cases: always process headings (for TOC positions), footnote definitions,
-            // and blocks containing scroll/search targets.
+            // Special cases: always process footnote definitions and blocks containing
+            // scroll/search targets. Off-screen headings can still be culled because we
+            // record their Y positions before skipping them.
             let is_scroll_target_block = scroll_target_block_idx == Some(block_idx);
             let is_search_target_block = self
                 .search_target
                 .is_some_and(|target| target >= block_start_offset && target <= block_end_offset);
-            let must_process = block.is_heading
-                || is_scroll_target_block
+            let must_process = is_scroll_target_block
                 || is_search_target_block
                 || matches!(
                     events.get(block.event_start),
@@ -1524,6 +1524,10 @@ impl MarkdownRenderer {
                 );
 
             if !must_process && (is_above_viewport || is_below_viewport) {
+                if block.is_heading {
+                    heading_positions.push(cursor_y);
+                    self.heading_index += 1;
+                }
                 // Skip this entire block - allocate space and advance char_offset
                 let w = ui.available_width();
                 ui.allocate_space(Vec2::new(w, block_height));
