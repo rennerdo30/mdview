@@ -687,6 +687,60 @@ fn compute_block_map(events: &[Event<'_>], available_width: f32) -> Vec<ContentB
     blocks
 }
 
+/// Hash the style/layout settings that can affect measured block heights.
+/// Keeping this separate from the parsed-event cache lets viewport culling reuse work
+/// aggressively while still invalidating stale measurements after visual settings change.
+fn render_layout_cache_key(config: &Config) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    let prime: u64 = 0x100000001b3;
+
+    fn feed_u32(hash: &mut u64, prime: u64, val: u32) {
+        *hash ^= val as u64;
+        *hash = hash.wrapping_mul(prime);
+    }
+
+    fn feed_bool(hash: &mut u64, prime: u64, val: bool) {
+        feed_u32(hash, prime, val as u32);
+    }
+
+    fn feed_f32(hash: &mut u64, prime: u64, val: f32) {
+        feed_u32(hash, prime, val.to_bits());
+    }
+
+    fn feed_opt_f32(hash: &mut u64, prime: u64, val: Option<f32>) {
+        match val {
+            Some(value) => {
+                feed_bool(hash, prime, true);
+                feed_f32(hash, prime, value);
+            }
+            None => feed_bool(hash, prime, false),
+        }
+    }
+
+    fn feed_str(hash: &mut u64, prime: u64, val: &str) {
+        for byte in val.bytes() {
+            *hash ^= byte as u64;
+            *hash = hash.wrapping_mul(prime);
+        }
+        *hash ^= 0xff;
+        *hash = hash.wrapping_mul(prime);
+    }
+
+    feed_str(&mut hash, prime, &config.theme.fonts.body);
+    feed_str(&mut hash, prime, &config.theme.fonts.heading);
+    feed_str(&mut hash, prime, &config.theme.fonts.code);
+    feed_f32(&mut hash, prime, config.theme.fonts.size);
+    feed_f32(&mut hash, prime, config.theme.fonts.line_height);
+    feed_f32(&mut hash, prime, config.theme.spacing.paragraph);
+    feed_f32(&mut hash, prime, config.theme.spacing.heading_top);
+    feed_f32(&mut hash, prime, config.theme.spacing.heading_bottom);
+    feed_f32(&mut hash, prime, config.theme.spacing.list_indent);
+    feed_f32(&mut hash, prime, config.theme.spacing.code_padding);
+    feed_opt_f32(&mut hash, prime, config.layout.image_width);
+    feed_bool(&mut hash, prime, config.markdown.show_line_numbers);
+    hash
+}
+
 /// Markdown renderer that converts events to egui widgets
 pub struct MarkdownRenderer {
     /// Current text buffer for accumulating inline content
@@ -836,9 +890,9 @@ pub struct MarkdownRenderer {
     culled_count: usize,
 
     /// Cached block map for event-level viewport culling
-    /// Invalidated when the events slice pointer or available width changes
-    /// Tuple: (events_ptr, available_width_rounded, blocks)
-    cached_block_map: Option<(usize, u32, Vec<ContentBlock>)>,
+    /// Invalidated when events, available width, or height-affecting style settings change
+    /// Tuple: (events_ptr, available_width_rounded, render_layout_key, blocks)
+    cached_block_map: Option<(usize, u32, u64, Vec<ContentBlock>)>,
 
     /// Running Y offset accumulator for block-level culling
     /// Tracks estimated cumulative height as blocks are skipped/rendered
@@ -1395,10 +1449,15 @@ impl MarkdownRenderer {
         let available_width = ui.available_width();
         // Round width to nearest 10px to avoid thrashing on subpixel changes
         let width_key = (available_width / 10.0) as u32;
+        let layout_key = render_layout_cache_key(config);
         let mut block_map = match self.cached_block_map.take() {
-            Some((id, w, blocks)) if id == events_id && w == width_key => blocks,
-            Some((id, _w, old_blocks)) if id == events_id => {
-                // Width changed but same document — recompute estimates but preserve
+            Some((id, w, key, blocks))
+                if id == events_id && w == width_key && key == layout_key =>
+            {
+                blocks
+            }
+            Some((id, _w, key, old_blocks)) if id == events_id && key == layout_key => {
+                // Width changed but same document/style — recompute estimates but preserve
                 // actual_height measurements from previous frames to avoid layout jumps.
                 let mut new_blocks = compute_block_map(events, available_width);
                 for (new_block, old_block) in new_blocks.iter_mut().zip(old_blocks.iter()) {
@@ -1540,7 +1599,7 @@ impl MarkdownRenderer {
         }
 
         // Store the block map back with updated actual heights
-        self.cached_block_map = Some((events_id, width_key, block_map));
+        self.cached_block_map = Some((events_id, width_key, layout_key, block_map));
 
         // Render footnote definitions at the end if any exist
         if !self.footnote_definitions.is_empty() {
@@ -4267,6 +4326,29 @@ Raw HTML
 
         // Narrower width should produce taller estimated height
         assert!(blocks_narrow[0].estimated_height > blocks_wide[0].estimated_height);
+    }
+
+    #[test]
+    fn test_render_layout_cache_key_tracks_height_affecting_settings() {
+        let config = Config::default();
+        let baseline = render_layout_cache_key(&config);
+
+        let mut font_changed = config.clone();
+        font_changed.theme.fonts.size += 2.0;
+        assert_ne!(baseline, render_layout_cache_key(&font_changed));
+
+        let mut spacing_changed = config.clone();
+        spacing_changed.theme.spacing.paragraph += 4.0;
+        assert_ne!(baseline, render_layout_cache_key(&spacing_changed));
+
+        let mut image_width_changed = config.clone();
+        image_width_changed.layout.image_width = Some(320.0);
+        assert_ne!(baseline, render_layout_cache_key(&image_width_changed));
+
+        let mut line_numbers_changed = config;
+        line_numbers_changed.markdown.show_line_numbers =
+            !line_numbers_changed.markdown.show_line_numbers;
+        assert_ne!(baseline, render_layout_cache_key(&line_numbers_changed));
     }
 
     #[test]
