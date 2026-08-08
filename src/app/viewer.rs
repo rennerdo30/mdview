@@ -57,6 +57,86 @@ const ZOOM_SCROLL_STEP: f32 = 40.0;
 /// Estimated pixels-per-character ratio for scroll position estimation
 const ESTIMATED_PIXELS_PER_CHAR: f32 = 0.25;
 
+/// Width of the search field in the find bar
+const SEARCH_FIELD_WIDTH: f32 = 260.0;
+/// Height of the search field in the find bar
+const SEARCH_FIELD_HEIGHT: f32 = 24.0;
+/// Side padding of the top/bottom bars
+const BAR_PADDING_X: f32 = space::LG;
+/// Vertical padding of the status bar
+const STATUS_BAR_PADDING_Y: f32 = 6.0;
+/// Size of the app mark on the welcome screen
+const LOGO_SIZE: f32 = 56.0;
+/// Gap between the app mark and the word mark
+const LOGO_TEXT_GAP: f32 = space::MD;
+/// Font size of the word mark on the welcome screen
+const WORDMARK_FONT_SIZE: f32 = 42.0;
+/// Width of the recent-files card on the welcome screen
+const WELCOME_CARD_WIDTH: f32 = 400.0;
+/// Height of one recent-file row
+const RECENT_ROW_HEIGHT: f32 = 44.0;
+/// Number of recent files listed on the welcome screen
+const RECENT_FILES_SHOWN: usize = 5;
+/// Maximum number of characters shown for a recent file's directory
+const RECENT_DIR_MAX_CHARS: usize = 50;
+/// Fraction of the viewport height left above the welcome screen content
+const WELCOME_TOP_FRACTION: f32 = 0.12;
+/// Corner radius of the drag-and-drop overlay outline
+const DROP_OVERLAY_INSET: f32 = 20.0;
+/// Stroke width of the drag-and-drop overlay outline
+const DROP_OVERLAY_STROKE: f32 = 2.0;
+/// Font size of the drag-and-drop overlay label
+const DROP_OVERLAY_FONT_SIZE: f32 = 24.0;
+/// Default, minimum and maximum width of the file browser sidebar
+const FILE_BROWSER_DEFAULT_WIDTH: f32 = 250.0;
+const FILE_BROWSER_MIN_WIDTH: f32 = 180.0;
+const FILE_BROWSER_MAX_WIDTH: f32 = 400.0;
+/// Breathing room below the last rendered block so the end of a document can scroll clear
+/// of the status bar
+const CONTENT_BOTTOM_SPACE: f32 = 64.0;
+/// Fraction of the viewport used as top offset for the loading state
+const LOADING_TOP_DIVISOR: f32 = 3.0;
+/// Font sizes of the loading state texts
+const LOADING_TITLE_FONT_SIZE: f32 = 18.0;
+const LOADING_HINT_FONT_SIZE: f32 = 13.0;
+/// Font size of the warning banner icon
+const BANNER_ICON_FONT_SIZE: f32 = 16.0;
+/// Font sizes of the welcome screen texts
+const WELCOME_SUBTITLE_FONT_SIZE: f32 = 16.0;
+const WELCOME_SECTION_FONT_SIZE: f32 = 13.0;
+/// Width of the welcome screen action hint column
+const WELCOME_HINTS_WIDTH: f32 = 300.0;
+/// Brand mark colours and geometry
+const LOGO_COLOR: egui::Color32 = egui::Color32::from_rgb(139, 92, 246);
+const LOGO_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgba_premultiplied(15, 15, 15, 15);
+const LOGO_DIAMOND: egui::Color32 = egui::Color32::from_rgba_premultiplied(230, 230, 230, 230);
+const LOGO_ROUNDING: f32 = 14.0;
+/// Default width of the settings window
+const SETTINGS_DIALOG_WIDTH: f32 = 520.0;
+/// Selectable themes as (config value, label shown in the UI)
+const THEME_CHOICES: &[(&str, &str)] = &[("dark", "Dark"), ("light", "Light")];
+
+/// Label for a theme config value, falling back to the raw value for custom themes.
+fn theme_display_name(value: &str) -> &str {
+    THEME_CHOICES
+        .iter()
+        .find(|(config_value, _)| *config_value == value)
+        .map(|(_, label)| *label)
+        .unwrap_or(value)
+}
+
+/// Minimum width and font sizes of the About dialog
+const ABOUT_DIALOG_MIN_WIDTH: f32 = 300.0;
+const ABOUT_TITLE_FONT_SIZE: f32 = 24.0;
+const ABOUT_BODY_FONT_SIZE: f32 = 14.0;
+const ABOUT_CAPTION_FONT_SIZE: f32 = 13.0;
+/// Recent file row metrics
+const RECENT_TEXT_OFFSET: f32 = 32.0;
+const RECENT_NAME_FONT_SIZE: f32 = 14.0;
+const RECENT_DIR_FONT_SIZE: f32 = 11.0;
+const RECENT_NAME_BASELINE: f32 = 14.0;
+const RECENT_DIR_BASELINE: f32 = 32.0;
+
 impl CachedKeybindings {
     fn from_config(config: &crate::config::schema::KeybindingsConfig) -> Self {
         Self {
@@ -326,7 +406,7 @@ use crate::annotations::ui::{AnnotationAction, AnnotationPopup};
 use crate::app::file_browser::{rfd_open_folder, FileBrowserPanel};
 use crate::config::Config;
 use crate::markdown::renderer::{MarkdownRenderer, RenderTargets};
-use crate::theme::style::{create_style, palette};
+use crate::theme::style::{create_style, icon, radius, space, ThemeColors};
 use crate::toc::panel::TocPanel;
 use crate::update::UpdateChecker;
 use crate::watcher::file_watcher::FileWatcher;
@@ -718,71 +798,89 @@ impl MdViewApp {
         let mut should_open_issues = false;
         let issue_url = format!("{}/issues", REPOSITORY_URL.trim_end_matches('/'));
 
+        let colors = ThemeColors::from_ctx(ctx);
+
         egui::Window::new("About mdview")
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .min_width(300.0)
+            .min_width(ABOUT_DIALOG_MIN_WIDTH)
             .show(ctx, |ui| {
-                ui.add_space(16.0);
+                ui.add_space(space::LG);
 
                 ui.vertical_centered(|ui| {
+                    render_logo_icon(ui);
+
+                    ui.add_space(space::MD);
+
                     // App name
                     ui.label(
                         egui::RichText::new("mdview")
-                            .size(24.0)
+                            .size(ABOUT_TITLE_FONT_SIZE)
                             .strong()
-                            .color(palette::TEXT_PRIMARY),
+                            .color(colors.text_primary),
                     );
 
-                    ui.add_space(4.0);
+                    ui.add_space(space::XS);
 
                     // Version
                     ui.label(
                         egui::RichText::new(format!("Version {}", crate::update::CURRENT_VERSION))
-                            .size(14.0)
-                            .color(palette::TEXT_SECONDARY),
+                            .size(ABOUT_BODY_FONT_SIZE)
+                            .color(colors.text_secondary),
                     );
 
-                    ui.add_space(16.0);
+                    ui.add_space(space::LG);
 
                     // Description
                     ui.label(
                         egui::RichText::new("A fast, cross-platform markdown viewer")
-                            .size(13.0)
-                            .color(palette::TEXT_MUTED),
+                            .size(ABOUT_CAPTION_FONT_SIZE)
+                            .color(colors.text_secondary),
                     );
 
-                    ui.add_space(8.0);
+                    ui.add_space(space::SM);
 
                     ui.label(
                         egui::RichText::new("Built with Rust and egui")
-                            .size(12.0)
-                            .color(palette::TEXT_DISABLED),
+                            .size(ABOUT_CAPTION_FONT_SIZE)
+                            .color(colors.text_muted),
                     );
 
-                    ui.add_space(16.0);
+                    ui.add_space(space::LG);
 
                     // Links
                     ui.horizontal(|ui| {
-                        if ui.link("GitHub").clicked() {
+                        if ui
+                            .link("GitHub")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
                             should_open_repo = true;
                         }
-                        ui.label(" | ");
-                        if ui.link("Report Issue").clicked() {
+                        ui.label(egui::RichText::new(icon::DOT).color(colors.text_muted));
+                        if ui
+                            .link("Report an issue")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
                             should_open_issues = true;
                         }
                     });
 
-                    ui.add_space(16.0);
+                    ui.add_space(space::LG);
 
                     // Close button
-                    if ui.button("Close").clicked() {
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Close this dialog (Esc)")
+                        .clicked()
+                    {
                         should_close = true;
                     }
                 });
 
-                ui.add_space(8.0);
+                ui.add_space(space::SM);
             });
 
         if should_open_repo {
@@ -1402,7 +1500,13 @@ impl MdViewApp {
 
         if escape {
             // Priority order: dismiss one thing per press
-            if self.annotation_popup.visible {
+            if self.show_settings_dialog {
+                self.show_settings_dialog = false;
+            } else if self.show_about_dialog {
+                self.show_about_dialog = false;
+            } else if self.show_help_dialog {
+                self.show_help_dialog = false;
+            } else if self.annotation_popup.visible {
                 self.annotation_popup.hide();
             } else if self.state.creating_annotation {
                 self.state.creating_annotation = false;
@@ -1709,18 +1813,14 @@ impl MdViewApp {
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
 
-        let is_dark = ctx.style().visuals.dark_mode;
-        let menu_bg = if is_dark {
-            palette::BG_DARK
-        } else {
-            palette::light::BG_SIDEBAR
-        };
+        let colors = ThemeColors::from_ctx(ctx);
 
         egui::TopBottomPanel::top("menu_bar")
             .frame(
                 egui::Frame::none()
-                    .fill(menu_bg)
-                    .inner_margin(egui::Margin::symmetric(12.0, 6.0)),
+                    .fill(colors.sidebar_bg)
+                    .inner_margin(egui::Margin::symmetric(space::MD, STATUS_BAR_PADDING_Y))
+                    .stroke(Stroke::new(1.0, colors.border_subtle)),
             )
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
@@ -1752,7 +1852,7 @@ impl MdViewApp {
                     }
 
                     Self::render_help_menu(ui, &mut actions);
-                    Self::render_menu_file_name(ui, current_file_name.as_deref());
+                    Self::render_menu_file_name(ui, current_file_name.as_deref(), &colors);
                 });
             });
 
@@ -1765,14 +1865,12 @@ impl MdViewApp {
         actions: &mut MenuActions,
     ) {
         ui.menu_button("File", |ui| {
-            let open_file_label = format!("Open File...      {}", shortcuts::format("O"));
-            if ui.button(&open_file_label).clicked() {
+            if menu_item(ui, "Open File\u{2026}", &shortcuts::format("O")).clicked() {
                 actions.open_dialog = true;
                 ui.close_menu();
             }
 
-            let open_folder_label = format!("Open Folder...    {}", shortcuts::format_shift("O"));
-            if ui.button(&open_folder_label).clicked() {
+            if menu_item(ui, "Open Folder\u{2026}", &shortcuts::format_shift("O")).clicked() {
                 actions.open_folder_dialog = true;
                 ui.close_menu();
             }
@@ -1801,36 +1899,33 @@ impl MdViewApp {
 
             ui.separator();
 
-            let reload_label = format!("Reload            {}", shortcuts::key_only("F5"));
-            if ui.button(&reload_label).clicked() {
+            if menu_item(ui, "Reload", &shortcuts::key_only("F5")).clicked() {
                 actions.reload = true;
                 ui.close_menu();
             }
 
             ui.separator();
 
-            let export_label = format!("Export PDF        {}", shortcuts::format("P"));
-            if ui.button(&export_label).clicked() {
+            if menu_item(ui, "Export PDF\u{2026}", &shortcuts::format("P")).clicked() {
                 actions.export_pdf = true;
                 ui.close_menu();
             }
 
             ui.separator();
 
-            if ui.button("Settings...").clicked() {
+            if ui.button("Settings\u{2026}").clicked() {
                 actions.show_settings = true;
                 ui.close_menu();
             }
 
-            if ui.button("Edit Config...").clicked() {
+            if ui.button("Edit Config\u{2026}").clicked() {
                 actions.edit_config = true;
                 ui.close_menu();
             }
 
             ui.separator();
 
-            let quit_label = format!("Quit              {}", shortcuts::format("Q"));
-            if ui.button(&quit_label).clicked() {
+            if menu_item(ui, "Quit", &shortcuts::format("Q")).clicked() {
                 actions.quit = true;
             }
         });
@@ -1846,25 +1941,23 @@ impl MdViewApp {
         actions: &mut MenuActions,
     ) {
         ui.menu_button("View", |ui| {
-            let toc_shortcut = shortcuts::format("T");
             let toc_label = if toc_visible {
-                format!("Hide Contents     {}", toc_shortcut)
+                "Hide Contents"
             } else {
-                format!("Show Contents     {}", toc_shortcut)
+                "Show Contents"
             };
-            if ui.button(&toc_label).clicked() {
+            if menu_item(ui, toc_label, &shortcuts::format("T")).clicked() {
                 actions.toggle_toc = true;
                 ui.close_menu();
             }
 
             if folder_is_open {
-                let fb_shortcut = shortcuts::format("E");
                 let fb_label = if file_browser_visible {
-                    format!("Hide File Browser {}", fb_shortcut)
+                    "Hide File Browser"
                 } else {
-                    format!("Show File Browser {}", fb_shortcut)
+                    "Show File Browser"
                 };
-                if ui.button(&fb_label).clicked() {
+                if menu_item(ui, fb_label, &shortcuts::format("E")).clicked() {
                     actions.toggle_file_browser = true;
                     ui.close_menu();
                 }
@@ -1944,10 +2037,10 @@ impl MdViewApp {
         });
     }
 
-    fn render_menu_file_name(ui: &mut egui::Ui, file_name: Option<&str>) {
+    fn render_menu_file_name(ui: &mut egui::Ui, file_name: Option<&str>, colors: &ThemeColors) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(name) = file_name {
-                ui.label(egui::RichText::new(name).color(palette::TEXT_MUTED).small());
+                ui.label(egui::RichText::new(name).color(colors.text_muted).small());
             }
         });
     }
@@ -2070,49 +2163,29 @@ impl MdViewApp {
     fn render_status_bar(&mut self, ctx: &egui::Context) {
         self.state.clear_expired_status();
 
-        let is_dark = ctx.style().visuals.dark_mode;
-        let status_bg = if is_dark {
-            palette::BG_DARK
-        } else {
-            palette::light::BG_SIDEBAR
-        };
-        let border_color = if is_dark {
-            palette::BORDER_SUBTLE
-        } else {
-            palette::light::BORDER_SUBTLE
-        };
-        let text_muted = if is_dark {
-            palette::TEXT_MUTED
-        } else {
-            palette::light::TEXT_MUTED
-        };
-        let accent = if is_dark {
-            palette::ACCENT
-        } else {
-            palette::light::ACCENT
-        };
+        let colors = ThemeColors::from_ctx(ctx);
 
         egui::TopBottomPanel::bottom("status_bar")
             .frame(
                 egui::Frame::none()
-                    .fill(status_bg)
-                    .inner_margin(egui::Margin::symmetric(16.0, 6.0))
-                    .stroke(Stroke::new(1.0, border_color)),
+                    .fill(colors.sidebar_bg)
+                    .inner_margin(egui::Margin::symmetric(BAR_PADDING_X, STATUS_BAR_PADDING_Y))
+                    .stroke(Stroke::new(1.0, colors.border_subtle)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if let Some((msg, _)) = &self.state.status_message {
-                        ui.label(egui::RichText::new(msg).color(accent).small());
+                        ui.label(egui::RichText::new(msg).color(colors.accent).small());
                     } else if let Some(display) = &self.state.cached_file_display {
-                        ui.label(egui::RichText::new(display).color(text_muted).small());
+                        ui.label(
+                            egui::RichText::new(display)
+                                .color(colors.text_muted)
+                                .small(),
+                        );
                     } else {
                         ui.label(
                             egui::RichText::new("No file open")
-                                .color(if is_dark {
-                                    palette::TEXT_DISABLED
-                                } else {
-                                    palette::light::TEXT_MUTED
-                                })
+                                .color(colors.text_muted)
                                 .small(),
                         );
                     }
@@ -2121,13 +2194,17 @@ impl MdViewApp {
                         if self.state.config.general.hot_reload && self.watcher.is_some() {
                             // Watching indicator with subtle dot
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("●").color(palette::SUCCESS).small());
+                                ui.label(
+                                    egui::RichText::new(icon::DOT).color(colors.success).small(),
+                                );
                                 ui.label(
                                     egui::RichText::new("Watching")
-                                        .color(palette::TEXT_MUTED)
+                                        .color(colors.text_muted)
                                         .small(),
                                 );
-                            });
+                            })
+                            .response
+                            .on_hover_text("This file is reloaded automatically when it changes");
                         }
                     });
                 });
@@ -2139,42 +2216,27 @@ impl MdViewApp {
             return;
         }
 
-        let is_dark = ctx.style().visuals.dark_mode;
-        let panel_bg = if is_dark {
-            palette::BG_DARK
-        } else {
-            palette::light::BG_SIDEBAR
-        };
-        let border_color = if is_dark {
-            palette::BORDER_SUBTLE
-        } else {
-            palette::light::BORDER_SUBTLE
-        };
-        let text_muted = if is_dark {
-            palette::TEXT_MUTED
-        } else {
-            palette::light::TEXT_MUTED
-        };
+        let colors = ThemeColors::from_ctx(ctx);
 
         egui::TopBottomPanel::top("document_search_bar")
             .frame(
                 egui::Frame::none()
-                    .fill(panel_bg)
-                    .inner_margin(egui::Margin::symmetric(16.0, 8.0))
-                    .stroke(Stroke::new(1.0, border_color)),
+                    .fill(colors.sidebar_bg)
+                    .inner_margin(egui::Margin::symmetric(BAR_PADDING_X, space::SM))
+                    .stroke(Stroke::new(1.0, colors.border_subtle)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("Find")
-                            .color(text_muted)
+                            .color(colors.text_muted)
                             .small()
                             .strong(),
                     );
 
                     let mut query = self.state.document_search.query.clone();
                     let response = ui.add_sized(
-                        [260.0, 24.0],
+                        [SEARCH_FIELD_WIDTH, SEARCH_FIELD_HEIGHT],
                         egui::TextEdit::singleline(&mut query).hint_text("Search document"),
                     );
                     if self.document_search_focus_pending {
@@ -2184,8 +2246,15 @@ impl MdViewApp {
                     if response.changed() {
                         self.state.set_document_search_query(query);
                     }
+
+                    // Enter jumps to the next match, Shift+Enter to the previous one.
                     if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                        self.state.next_search_match();
+                        if ui.input(|i| i.modifiers.shift) {
+                            self.state.previous_search_match();
+                        } else {
+                            self.state.next_search_match();
+                        }
+                        response.request_focus();
                     }
 
                     let total = self.state.document_search.matches.len();
@@ -2195,26 +2264,42 @@ impl MdViewApp {
                         .current_match
                         .map(|idx| idx + 1)
                         .unwrap_or(0);
-                    ui.label(
-                        egui::RichText::new(format!("{}/{}", current, total))
-                            .color(text_muted)
-                            .small(),
-                    );
+                    let has_query = !self.state.document_search.query.is_empty();
+
+                    if has_query && total == 0 {
+                        ui.label(
+                            egui::RichText::new("No matches")
+                                .color(colors.warning_text)
+                                .small(),
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new(format!("{}/{}", current, total))
+                                .color(colors.text_muted)
+                                .small(),
+                        );
+                    }
 
                     let can_navigate = total > 0;
                     if ui
-                        .add_enabled(can_navigate, egui::Button::new("Prev"))
+                        .add_enabled(can_navigate, egui::Button::new("Previous"))
+                        .on_hover_text("Previous match (Shift+Enter)")
                         .clicked()
                     {
                         self.state.previous_search_match();
                     }
                     if ui
                         .add_enabled(can_navigate, egui::Button::new("Next"))
+                        .on_hover_text("Next match (Enter)")
                         .clicked()
                     {
                         self.state.next_search_match();
                     }
-                    if ui.button("Close").clicked() {
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Close the find bar (Esc)")
+                        .clicked()
+                    {
                         self.show_document_search = false;
                         self.document_search_focus_pending = false;
                     }
@@ -2231,7 +2316,7 @@ impl MdViewApp {
 
         egui::Window::new("Settings")
             .open(&mut open)
-            .default_width(520.0)
+            .default_width(SETTINGS_DIALOG_WIDTH)
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
@@ -2241,14 +2326,14 @@ impl MdViewApp {
                     ui.horizontal(|ui| {
                         ui.label("Theme");
                         egui::ComboBox::from_id_salt("settings_theme")
-                            .selected_text(&config.general.theme)
+                            .selected_text(theme_display_name(&config.general.theme))
                             .show_ui(ui, |ui| {
-                                for theme in ["dark", "light"] {
+                                for (value, label) in THEME_CHOICES {
                                     if ui
                                         .selectable_value(
                                             &mut config.general.theme,
-                                            theme.to_string(),
-                                            theme,
+                                            (*value).to_string(),
+                                            *label,
                                         )
                                         .changed()
                                     {
@@ -2260,6 +2345,7 @@ impl MdViewApp {
                     });
                     changed |= ui
                         .checkbox(&mut config.general.hot_reload, "Hot reload")
+                        .on_hover_text("Reload the document automatically when the file changes")
                         .changed();
                     if ui
                         .checkbox(&mut config.general.show_toc, "Show table of contents")
@@ -2270,6 +2356,7 @@ impl MdViewApp {
                     }
                     changed |= ui
                         .checkbox(&mut config.general.check_for_updates, "Check for updates")
+                        .on_hover_text("Ask GitHub for newer releases when mdview starts")
                         .changed();
                 });
 
@@ -2378,14 +2465,14 @@ impl MdViewApp {
                     ui.horizontal(|ui| {
                         ui.label("PDF theme");
                         egui::ComboBox::from_id_salt("settings_pdf_theme")
-                            .selected_text(&config.export.pdf_theme)
+                            .selected_text(theme_display_name(&config.export.pdf_theme))
                             .show_ui(ui, |ui| {
-                                for theme in ["light", "dark"] {
+                                for (value, label) in THEME_CHOICES {
                                     changed |= ui
                                         .selectable_value(
                                             &mut config.export.pdf_theme,
-                                            theme.to_string(),
-                                            theme,
+                                            (*value).to_string(),
+                                            *label,
                                         )
                                         .changed();
                                 }
@@ -2459,21 +2546,7 @@ impl MdViewApp {
         }
 
         let is_dark = ctx.style().visuals.dark_mode;
-        let panel_bg = if is_dark {
-            palette::BG_DARK
-        } else {
-            palette::light::BG_SIDEBAR
-        };
-        let border_color = if is_dark {
-            palette::BORDER_SUBTLE
-        } else {
-            palette::light::BORDER_SUBTLE
-        };
-        let text_muted = if is_dark {
-            palette::TEXT_MUTED
-        } else {
-            palette::light::TEXT_MUTED
-        };
+        let colors = ThemeColors::new(is_dark);
 
         // Keep configured width within supported bounds.
         let target_width = self.state.toc_width.clamp(TOC_MIN_WIDTH, TOC_MAX_WIDTH);
@@ -2507,26 +2580,26 @@ impl MdViewApp {
         let panel_response = panel
             .frame(
                 egui::Frame::none()
-                    .fill(panel_bg)
+                    .fill(colors.sidebar_bg)
                     .inner_margin(egui::Margin::same(0.0))
-                    .stroke(Stroke::new(1.0, border_color)),
+                    .stroke(Stroke::new(1.0, colors.border_subtle)),
             )
             .show(ctx, |ui| {
                 // Clip contents during animation to prevent overflow
                 ui.set_clip_rect(ui.available_rect_before_wrap());
 
                 // Header
-                ui.add_space(16.0);
+                ui.add_space(space::LG);
                 ui.horizontal(|ui| {
-                    ui.add_space(16.0);
+                    ui.add_space(space::LG);
                     ui.label(
                         egui::RichText::new("CONTENTS")
-                            .color(text_muted)
+                            .color(colors.text_muted)
                             .small()
                             .strong(),
                     );
                 });
-                ui.add_space(8.0);
+                ui.add_space(space::SM);
 
                 // TOC entries (only interactive when fully open)
                 if fully_open {
@@ -2571,47 +2644,32 @@ impl MdViewApp {
             return;
         }
 
-        let is_dark = ctx.style().visuals.dark_mode;
-        let panel_bg = if is_dark {
-            palette::BG_DARK
-        } else {
-            palette::light::BG_SIDEBAR
-        };
-        let border_color = if is_dark {
-            palette::BORDER_SUBTLE
-        } else {
-            palette::light::BORDER_SUBTLE
-        };
-        let text_muted = if is_dark {
-            palette::TEXT_MUTED
-        } else {
-            palette::light::TEXT_MUTED
-        };
+        let colors = ThemeColors::from_ctx(ctx);
 
         let mut file_to_open: Option<PathBuf> = None;
 
         egui::SidePanel::right("file_browser_panel")
             .resizable(true)
-            .default_width(250.0)
-            .width_range(180.0..=400.0)
+            .default_width(FILE_BROWSER_DEFAULT_WIDTH)
+            .width_range(FILE_BROWSER_MIN_WIDTH..=FILE_BROWSER_MAX_WIDTH)
             .frame(
                 egui::Frame::none()
-                    .fill(panel_bg)
-                    .inner_margin(egui::Margin::same(8.0))
-                    .stroke(Stroke::new(1.0, border_color)),
+                    .fill(colors.sidebar_bg)
+                    .inner_margin(egui::Margin::same(space::SM))
+                    .stroke(Stroke::new(1.0, colors.border_subtle)),
             )
             .show(ctx, |ui| {
                 // Header
-                ui.add_space(8.0);
+                ui.add_space(space::SM);
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("FILES")
-                            .color(text_muted)
+                            .color(colors.text_muted)
                             .small()
                             .strong(),
                     );
                 });
-                ui.add_space(8.0);
+                ui.add_space(space::SM);
 
                 // File browser
                 let current_file = self.state.current_file.as_deref();
@@ -2630,19 +2688,15 @@ impl MdViewApp {
     }
 
     fn render_main_content(&mut self, ctx: &egui::Context) {
-        let is_dark = ctx.style().visuals.dark_mode;
-        let main_bg = if is_dark {
-            palette::BG_BASE
-        } else {
-            palette::light::BG_BASE
-        };
+        let colors = ThemeColors::from_ctx(ctx);
+        let is_dark = colors.is_dark;
 
         let mut file_to_open: Option<PathBuf> = None;
 
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::none()
-                    .fill(main_bg)
+                    .fill(colors.content_bg)
                     .inner_margin(egui::Margin::same(0.0)),
             )
             .show(ctx, |ui| {
@@ -2700,7 +2754,7 @@ impl MdViewApp {
                 let scroll_output = egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.add_space(32.0);
+                        ui.add_space(space::XXL);
                         ui.horizontal(|ui| {
                             ui.add_space(self.state.config.layout.content_margin);
                             ui.vertical(|ui| {
@@ -2721,7 +2775,7 @@ impl MdViewApp {
                                 );
                             });
                         });
-                        ui.add_space(64.0);
+                        ui.add_space(CONTENT_BOTTOM_SPACE);
                     });
 
                 let scroll_offset = scroll_output.state.offset.y;
@@ -2787,107 +2841,103 @@ impl MdViewApp {
     }
 }
 
+/// A menu entry with its shortcut right-aligned in a dimmed column, so the shortcuts line
+/// up regardless of label length (manual space padding does not align in a proportional font).
+fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
+    ui.add(egui::Button::new(label).shortcut_text(shortcut))
+}
+
 /// Render a loading indicator (spinner)
 fn render_loading_indicator(ui: &mut egui::Ui, is_dark: bool) {
-    let text_color = if is_dark {
-        palette::TEXT_PRIMARY
-    } else {
-        palette::light::TEXT_PRIMARY
-    };
-    let accent_color = if is_dark {
-        egui::Color32::from_rgb(78, 201, 176)
-    } else {
-        egui::Color32::from_rgb(0, 120, 150)
-    };
+    let colors = ThemeColors::new(is_dark);
 
-    ui.centered_and_justified(|ui| {
-        ui.vertical_centered(|ui| {
-            ui.add_space(ui.available_height() / 3.0);
+    ui.vertical_centered(|ui| {
+        ui.add_space(ui.available_height() / LOADING_TOP_DIVISOR);
 
-            // Animated spinner
-            ui.spinner();
+        // Animated spinner
+        ui.add(egui::Spinner::new().color(colors.accent));
 
-            ui.add_space(16.0);
+        ui.add_space(space::LG);
 
-            ui.label(
-                egui::RichText::new("Loading...")
-                    .size(18.0)
-                    .color(text_color),
-            );
+        ui.label(
+            egui::RichText::new("Loading document")
+                .size(LOADING_TITLE_FONT_SIZE)
+                .color(colors.text_primary),
+        );
 
-            ui.add_space(8.0);
+        ui.add_space(space::XS);
 
-            ui.label(
-                egui::RichText::new("Opening file")
-                    .size(13.0)
-                    .color(accent_color),
-            );
-        });
+        ui.label(
+            egui::RichText::new("This only takes a moment")
+                .size(LOADING_HINT_FONT_SIZE)
+                .color(colors.text_muted),
+        );
     });
 
     // Request continuous repainting for spinner animation
     ui.ctx().request_repaint();
 }
 
-/// Render the drag-and-drop overlay
+/// Render the drag-and-drop overlay.
+///
+/// Painted into a foreground layer: the document is drawn after this call, so painting into
+/// the current layer would put the whole overlay behind the document content.
 fn render_drag_drop_overlay(ui: &mut egui::Ui, is_dark: bool) {
-    let overlay_color = if is_dark {
-        egui::Color32::from_rgba_unmultiplied(78, 201, 176, 40)
-    } else {
-        egui::Color32::from_rgba_unmultiplied(0, 120, 150, 40)
-    };
-    let border_color = if is_dark {
-        egui::Color32::from_rgb(78, 201, 176)
-    } else {
-        egui::Color32::from_rgb(0, 120, 150)
-    };
-    let text_color = if is_dark {
-        palette::TEXT_PRIMARY
-    } else {
-        palette::light::TEXT_PRIMARY
-    };
-
+    let colors = ThemeColors::new(is_dark);
     let rect = ui.available_rect_before_wrap();
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("drag_drop_overlay"),
+    ));
 
     // Semi-transparent overlay
-    ui.painter().rect_filled(rect, 0.0, overlay_color);
+    painter.rect_filled(rect, 0.0, colors.accent_tint);
 
-    // Dashed border effect (using multiple lines)
-    let stroke = Stroke::new(3.0, border_color);
-    ui.painter()
-        .rect_stroke(rect.shrink(20.0), Rounding::same(12.0), stroke);
-
-    // Center text
-    let center = rect.center();
-    ui.painter().text(
-        center,
-        egui::Align2::CENTER_CENTER,
-        "Drop file or folder here",
-        egui::FontId::proportional(24.0),
-        text_color,
+    // Outlined drop target
+    let stroke = Stroke::new(DROP_OVERLAY_STROKE, colors.accent);
+    painter.rect_stroke(
+        rect.shrink(DROP_OVERLAY_INSET),
+        Rounding::same(radius::XL),
+        stroke,
     );
+
+    // Label on an opaque plate so it stays legible over document content
+    let center = rect.center();
+    let galley = painter.layout_no_wrap(
+        "Drop a Markdown file or folder to open it".to_owned(),
+        egui::FontId::proportional(DROP_OVERLAY_FONT_SIZE),
+        colors.text_primary,
+    );
+    let text_rect = egui::Align2::CENTER_CENTER.anchor_size(center, galley.size());
+    painter.rect_filled(
+        text_rect.expand2(Vec2::new(space::XL, space::MD)),
+        Rounding::same(radius::XL),
+        colors.elevated_bg,
+    );
+    painter.galley(text_rect.min, galley, colors.text_primary);
 }
 
 /// Render the deleted file warning banner
 fn render_deleted_file_banner(ui: &mut egui::Ui, is_dark: bool) {
-    let (bg_color, text_color) = if is_dark {
-        (palette::WARNING_BG, palette::WARNING_TEXT)
-    } else {
-        (palette::light::WARNING_BG, palette::light::WARNING_TEXT)
-    };
+    let colors = ThemeColors::new(is_dark);
 
     egui::Frame::none()
-        .fill(bg_color)
-        .inner_margin(egui::Margin::symmetric(16.0, 8.0))
+        .fill(colors.warning_bg)
+        .stroke(Stroke::new(1.0, colors.warning_text.gamma_multiply(0.4)))
+        .inner_margin(egui::Margin::symmetric(space::LG, space::SM))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("⚠").size(16.0).color(text_color));
-                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(icon::WARNING)
+                        .size(BANNER_ICON_FONT_SIZE)
+                        .color(colors.warning_text),
+                );
+                ui.add_space(space::SM);
                 ui.label(
                     egui::RichText::new(
                         "This file was deleted externally. Export and reload are disabled.",
                     )
-                    .color(text_color),
+                    .color(colors.warning_text),
                 );
             });
         });
@@ -2900,129 +2950,130 @@ fn render_welcome_screen(
     file_to_open: &mut Option<PathBuf>,
     is_dark: bool,
 ) {
+    let colors = ThemeColors::new(is_dark);
     let available_size = ui.available_size();
 
-    // Theme-aware colors
-    let text_primary = if is_dark {
-        palette::TEXT_PRIMARY
-    } else {
-        palette::light::TEXT_PRIMARY
-    };
-    let text_muted = if is_dark {
-        palette::TEXT_MUTED
-    } else {
-        palette::light::TEXT_MUTED
-    };
-    let bg_elevated = if is_dark {
-        palette::BG_ELEVATED
-    } else {
-        palette::light::BG_ELEVATED
-    };
-    let border_subtle = if is_dark {
-        palette::BORDER_SUBTLE
-    } else {
-        palette::light::BORDER_SUBTLE
-    };
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(available_size.y * WELCOME_TOP_FRACTION);
 
-    ui.vertical_centered(|ui| {
-        ui.add_space(available_size.y * 0.15);
+                // App mark and word mark, centred as one unit.
+                let wordmark = egui::RichText::new("mdview")
+                    .size(WORDMARK_FONT_SIZE)
+                    .color(colors.text_primary)
+                    .strong();
+                let wordmark_width = measure_text_width(ui, "mdview", WORDMARK_FONT_SIZE);
+                let brand_width = LOGO_SIZE + LOGO_TEXT_GAP + wordmark_width;
 
-        // Logo/Title area with styled icon
-        ui.horizontal(|ui| {
-            // Center the logo
-            let logo_width = 200.0;
-            ui.add_space((ui.available_width() - logo_width) / 2.0);
-
-            // Render the styled logo icon
-            render_logo_icon(ui);
-
-            ui.add_space(12.0);
-
-            ui.vertical(|ui| {
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new("mdview")
-                        .size(42.0)
-                        .color(text_primary)
-                        .strong(),
-                );
-            });
-        });
-
-        ui.add_space(8.0);
-
-        ui.label(
-            egui::RichText::new("A modern markdown viewer")
-                .size(16.0)
-                .color(text_muted),
-        );
-
-        ui.add_space(40.0);
-
-        // Action hints
-        ui.horizontal(|ui| {
-            ui.add_space((available_size.x - 300.0) / 2.0);
-            ui.vertical(|ui| {
-                let open_shortcut = shortcuts::format("O");
-                render_action_hint(ui, &open_shortcut, "Open file", is_dark);
-                ui.add_space(8.0);
-                render_action_hint(ui, "drag", "Drop a file here", is_dark);
-            });
-        });
-
-        ui.add_space(48.0);
-
-        // Recent files section
-        if !recent_files.is_empty() {
-            let card_width = 400.0;
-
-            egui::Frame::none()
-                .fill(bg_elevated)
-                .rounding(Rounding::same(12.0))
-                .stroke(Stroke::new(1.0, border_subtle))
-                .inner_margin(egui::Margin::same(20.0))
-                .show(ui, |ui| {
-                    ui.set_min_width(card_width);
-                    ui.set_max_width(card_width);
-
-                    ui.label(
-                        egui::RichText::new("Recent Files")
-                            .size(13.0)
-                            .color(text_muted)
-                            .strong(),
-                    );
-
-                    ui.add_space(12.0);
-
-                    for (path, name, dir) in recent_files.iter().take(5) {
-                        let response = render_recent_file_item(ui, name, dir, is_dark);
-                        if response.clicked() {
-                            *file_to_open = Some(path.clone());
-                        }
-                    }
+                ui.horizontal(|ui| {
+                    ui.add_space(centering_offset(ui.available_width(), brand_width));
+                    render_logo_icon(ui);
+                    ui.add_space(LOGO_TEXT_GAP);
+                    ui.vertical(|ui| {
+                        ui.add_space(space::SM);
+                        ui.label(wordmark);
+                    });
                 });
-        }
-    });
+
+                ui.add_space(space::SM);
+
+                ui.label(
+                    egui::RichText::new("A fast Markdown viewer for your desktop")
+                        .size(WELCOME_SUBTITLE_FONT_SIZE)
+                        .color(colors.text_secondary),
+                );
+
+                ui.add_space(space::XXL);
+
+                // Action hints
+                ui.horizontal(|ui| {
+                    ui.add_space(centering_offset(ui.available_width(), WELCOME_HINTS_WIDTH));
+                    ui.vertical(|ui| {
+                        let open_shortcut = shortcuts::format("O");
+                        render_action_hint(ui, &open_shortcut, "Open a file", is_dark);
+                        ui.add_space(space::SM);
+                        render_action_hint(ui, "Drop", "Drag a file or folder here", is_dark);
+                    });
+                });
+
+                ui.add_space(space::HUGE);
+
+                // Recent files section
+                if !recent_files.is_empty() {
+                    egui::Frame::none()
+                        .fill(colors.elevated_bg)
+                        .rounding(Rounding::same(radius::XL))
+                        .stroke(Stroke::new(1.0, colors.border_subtle))
+                        .inner_margin(egui::Margin::same(space::XL))
+                        .show(ui, |ui| {
+                            let card_width =
+                                WELCOME_CARD_WIDTH.min((available_size.x - space::XXL).max(0.0));
+                            ui.set_min_width(card_width);
+                            ui.set_max_width(card_width);
+
+                            ui.label(
+                                egui::RichText::new("Recent files")
+                                    .size(WELCOME_SECTION_FONT_SIZE)
+                                    .color(colors.text_muted)
+                                    .strong(),
+                            );
+
+                            ui.add_space(space::MD);
+
+                            for (path, name, dir) in recent_files.iter().take(RECENT_FILES_SHOWN) {
+                                let response = render_recent_file_item(ui, name, dir, is_dark)
+                                    .on_hover_text(path.display().to_string());
+                                if response.clicked() {
+                                    *file_to_open = Some(path.clone());
+                                }
+                            }
+                        });
+                }
+
+                ui.add_space(space::XXL);
+            });
+        });
+}
+
+/// Horizontal offset that centres `content_width` inside `available_width`, never negative
+/// (a negative `add_space` would pull following widgets backwards and overlap them).
+fn centering_offset(available_width: f32, content_width: f32) -> f32 {
+    ((available_width - content_width) / 2.0).max(0.0)
+}
+
+/// Measure the rendered width of a short proportional-font string.
+fn measure_text_width(ui: &egui::Ui, text: &str, font_size: f32) -> f32 {
+    ui.fonts(|fonts| {
+        fonts
+            .layout_no_wrap(
+                text.to_owned(),
+                egui::FontId::proportional(font_size),
+                egui::Color32::WHITE,
+            )
+            .size()
+            .x
+    })
 }
 
 /// Render the mdview logo icon
 fn render_logo_icon(ui: &mut egui::Ui) {
-    let size = 56.0;
+    let size = LOGO_SIZE;
     let (rect, _response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
 
     let painter = ui.painter();
 
-    // Purple gradient background (using solid color as egui doesn't support gradients easily)
-    let bg_color = egui::Color32::from_rgb(139, 92, 246); // #8B5CF6
-    painter.rect_filled(rect, Rounding::same(14.0), bg_color);
+    // Solid brand mark (egui has no gradient fills)
+    painter.rect_filled(rect, Rounding::same(LOGO_ROUNDING), LOGO_COLOR);
 
     // Add subtle highlight at top
     let highlight_rect =
         egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), rect.height() * 0.4));
     painter.rect_filled(
         highlight_rect,
-        Rounding::same(14.0),
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 15),
+        Rounding::same(LOGO_ROUNDING),
+        LOGO_HIGHLIGHT,
     );
 
     let center = rect.center();
@@ -3037,14 +3088,14 @@ fn render_logo_icon(ui: &mut egui::Ui) {
         egui::Pos2::new(center.x - bar_spacing / 2.0, center.y),
         Vec2::new(bar_width, bar_height),
     );
-    painter.rect_filled(left_bar, Rounding::same(2.0), egui::Color32::WHITE);
+    painter.rect_filled(left_bar, Rounding::same(radius::XS), egui::Color32::WHITE);
 
     // Right bar
     let right_bar = egui::Rect::from_center_size(
         egui::Pos2::new(center.x + bar_spacing / 2.0, center.y),
         Vec2::new(bar_width, bar_height),
     );
-    painter.rect_filled(right_bar, Rounding::same(2.0), egui::Color32::WHITE);
+    painter.rect_filled(right_bar, Rounding::same(radius::XS), egui::Color32::WHITE);
 
     // Center diamond
     let diamond_size = size * 0.18;
@@ -3056,44 +3107,31 @@ fn render_logo_icon(ui: &mut egui::Ui) {
     ];
     painter.add(egui::Shape::convex_polygon(
         diamond_points.to_vec(),
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 230),
+        LOGO_DIAMOND,
         egui::Stroke::NONE,
     ));
 }
 
 /// Render an action hint (shortcut + description)
 fn render_action_hint(ui: &mut egui::Ui, shortcut: &str, description: &str, is_dark: bool) {
-    let bg_elevated = if is_dark {
-        palette::BG_ELEVATED
-    } else {
-        palette::light::BG_ELEVATED
-    };
-    let text_secondary = if is_dark {
-        palette::TEXT_SECONDARY
-    } else {
-        palette::light::TEXT_SECONDARY
-    };
-    let text_muted = if is_dark {
-        palette::TEXT_MUTED
-    } else {
-        palette::light::TEXT_MUTED
-    };
+    let colors = ThemeColors::new(is_dark);
 
     ui.horizontal(|ui| {
         egui::Frame::none()
-            .fill(bg_elevated)
-            .rounding(Rounding::same(4.0))
-            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+            .fill(colors.elevated_bg)
+            .rounding(Rounding::same(radius::SM))
+            .stroke(Stroke::new(1.0, colors.border_default))
+            .inner_margin(egui::Margin::symmetric(space::SM, space::XS))
             .show(ui, |ui| {
                 ui.label(
                     egui::RichText::new(shortcut)
-                        .color(text_secondary)
+                        .color(colors.text_secondary)
                         .small()
                         .strong(),
                 );
             });
-        ui.add_space(8.0);
-        ui.label(egui::RichText::new(description).color(text_muted));
+        ui.add_space(space::SM);
+        ui.label(egui::RichText::new(description).color(colors.text_secondary));
     });
 }
 
@@ -3104,95 +3142,71 @@ fn render_recent_file_item(
     dir: &str,
     is_dark: bool,
 ) -> egui::Response {
-    // Theme-aware colors
-    let bg_hover = if is_dark {
-        palette::BG_HOVER
-    } else {
-        palette::light::BG_HOVER
-    };
-    let text_primary = if is_dark {
-        palette::TEXT_PRIMARY
-    } else {
-        palette::light::TEXT_PRIMARY
-    };
-    let text_secondary = if is_dark {
-        palette::TEXT_SECONDARY
-    } else {
-        palette::light::TEXT_SECONDARY
-    };
-    let text_muted = if is_dark {
-        palette::TEXT_MUTED
-    } else {
-        palette::light::TEXT_MUTED
-    };
-    let text_disabled = if is_dark {
-        palette::TEXT_DISABLED
-    } else {
-        palette::light::TEXT_DISABLED
-    };
+    let colors = ThemeColors::new(is_dark);
 
     // Truncate directory path by character count (UTF-8 safe).
     let truncated_dir = {
         let char_count = dir.chars().count();
-        if char_count > 50 {
-            let tail_start = char_count.saturating_sub(47);
+        if char_count > RECENT_DIR_MAX_CHARS {
+            let tail_start = char_count.saturating_sub(RECENT_DIR_MAX_CHARS - 3);
             let tail: String = dir.chars().skip(tail_start).collect();
-            format!("...{}", tail)
+            format!("{}{}", icon::ELLIPSIS, tail)
         } else {
             dir.to_string()
         }
     };
 
-    let row_height = 44.0;
+    let row_height = RECENT_ROW_HEIGHT;
     let available_width = ui.available_width();
 
     // Allocate space for the clickable row
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(available_width, row_height), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
     // Draw hover background
     if response.hovered() {
         ui.painter()
-            .rect_filled(rect, Rounding::same(6.0), bg_hover);
+            .rect_filled(rect, Rounding::same(radius::MD), colors.hover_bg);
     }
 
     // Draw content using the painter
-    let icon_pos = rect.min + Vec2::new(8.0, (row_height - 16.0) / 2.0);
-    let text_x = rect.min.x + 32.0;
+    let icon_pos = rect.min + Vec2::new(space::SM, row_height / 2.0);
+    let text_x = rect.min.x + RECENT_TEXT_OFFSET;
 
-    // File icon (📄 document emoji)
+    // File icon (document emoji)
     ui.painter().text(
         icon_pos,
         egui::Align2::LEFT_CENTER,
-        "\u{1F4C4}",
-        egui::FontId::proportional(14.0),
+        icon::DOCUMENT,
+        egui::FontId::proportional(RECENT_NAME_FONT_SIZE),
         if response.hovered() {
-            text_secondary
+            colors.text_secondary
         } else {
-            text_muted
+            colors.text_muted
         },
     );
 
     // File name
     ui.painter().text(
-        egui::Pos2::new(text_x, rect.min.y + 14.0),
+        egui::Pos2::new(text_x, rect.min.y + RECENT_NAME_BASELINE),
         egui::Align2::LEFT_CENTER,
         name,
-        egui::FontId::proportional(14.0),
+        egui::FontId::proportional(RECENT_NAME_FONT_SIZE),
         if response.hovered() {
-            text_primary
+            colors.text_primary
         } else {
-            text_secondary
+            colors.text_secondary
         },
     );
 
     // Directory path
     ui.painter().text(
-        egui::Pos2::new(text_x, rect.min.y + 32.0),
+        egui::Pos2::new(text_x, rect.min.y + RECENT_DIR_BASELINE),
         egui::Align2::LEFT_CENTER,
         &truncated_dir,
-        egui::FontId::proportional(11.0),
-        text_disabled,
+        egui::FontId::proportional(RECENT_DIR_FONT_SIZE),
+        colors.text_muted,
     );
 
     response

@@ -6,45 +6,104 @@
 
 use std::borrow::Cow;
 
-use egui::{Color32, Rounding, Ui, Vec2};
+use egui::{Rounding, Ui, Vec2};
 
 use super::{TocEntry, TocTree};
-use crate::theme::style::palette;
+use crate::theme::style::{icon, radius, space, ThemeColors};
 
-/// Pre-computed theme colors (computed once per render, not per entry)
-struct TocColors {
-    accent: Color32,
-    bg_hover: Color32,
-    bg_elevated: Color32,
-    text_primary: Color32,
-    text_secondary: Color32,
-    text_muted: Color32,
-    text_disabled: Color32,
+/// Height of a single TOC row.
+const ROW_HEIGHT: f32 = 28.0;
+/// Left padding of the first heading level.
+const BASE_INDENT: f32 = space::LG;
+/// Extra indent per heading level.
+const INDENT_PER_LEVEL: f32 = space::MD;
+/// Width of the accent bar marking the heading currently in view.
+const ACTIVE_MARKER_WIDTH: f32 = 3.0;
+/// Width of the keyboard focus outline.
+const FOCUS_STROKE_WIDTH: f32 = 2.0;
+/// Combined width reserved for the expand-all / collapse-all buttons.
+const HEADER_BUTTON_WIDTH: f32 = 40.0;
+/// Font size of the filter field.
+const FILTER_FONT_SIZE: f32 = 12.0;
+/// Font size per heading level (h1, h2, h3+).
+const HEADING_FONT_SIZES: [f32; 3] = [13.0, 12.5, 12.0];
+/// Size of the collapse/expand triangle.
+const TOGGLE_TRIANGLE_SIZE: f32 = 9.0;
+/// Hit area of the collapse/expand triangle.
+const TOGGLE_HIT_SIZE: f32 = 16.0;
+/// Distance from the heading text back to the centre of its triangle.
+const TOGGLE_OFFSET: f32 = 14.0;
+/// Smallest usable width for the filter field on very narrow sidebars.
+const MIN_FILTER_WIDTH: f32 = 60.0;
+/// Trailing padding reserved after the heading text.
+const TEXT_TRAILING_PAD: f32 = space::LG;
+
+/// Font size for a heading level (1-based).
+fn heading_font_size(level: usize) -> f32 {
+    let idx = level.saturating_sub(1).min(HEADING_FONT_SIZES.len() - 1);
+    HEADING_FONT_SIZES[idx]
 }
 
-impl TocColors {
-    fn new(is_dark: bool) -> Self {
-        if is_dark {
-            Self {
-                accent: palette::ACCENT,
-                bg_hover: palette::BG_HOVER,
-                bg_elevated: palette::BG_ELEVATED,
-                text_primary: palette::TEXT_PRIMARY,
-                text_secondary: palette::TEXT_SECONDARY,
-                text_muted: palette::TEXT_MUTED,
-                text_disabled: palette::TEXT_DISABLED,
-            }
-        } else {
-            Self {
-                accent: palette::light::ACCENT,
-                bg_hover: palette::light::BG_HOVER,
-                bg_elevated: palette::light::BG_ELEVATED,
-                text_primary: palette::light::TEXT_PRIMARY,
-                text_secondary: palette::light::TEXT_SECONDARY,
-                text_muted: palette::light::TEXT_MUTED,
-                text_disabled: palette::light::TEXT_DISABLED,
-            }
-        }
+/// Paint the expand/collapse triangle. Drawn as a shape rather than a glyph so it renders
+/// even when no loaded font covers the triangle code points.
+fn paint_disclosure_triangle(ui: &Ui, center: egui::Pos2, collapsed: bool, color: egui::Color32) {
+    let half = TOGGLE_TRIANGLE_SIZE / 2.0;
+    let points = if collapsed {
+        vec![
+            egui::Pos2::new(center.x - half * 0.7, center.y - half),
+            egui::Pos2::new(center.x + half * 0.8, center.y),
+            egui::Pos2::new(center.x - half * 0.7, center.y + half),
+        ]
+    } else {
+        vec![
+            egui::Pos2::new(center.x - half, center.y - half * 0.7),
+            egui::Pos2::new(center.x + half, center.y - half * 0.7),
+            egui::Pos2::new(center.x, center.y + half * 0.8),
+        ]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        points,
+        color,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// Paint the row background, the "currently in view" accent marker and the keyboard focus
+/// ring, in that order. Order matters: egui paints shapes back to front, so the marker and
+/// the focus ring have to be added *after* the background fill or they get covered up.
+fn paint_row_states(
+    ui: &Ui,
+    rect: egui::Rect,
+    colors: &ThemeColors,
+    is_current: bool,
+    is_focused: bool,
+    is_hovered: bool,
+) {
+    let fill = if is_current {
+        Some(colors.hover_bg)
+    } else if is_focused || is_hovered {
+        Some(colors.elevated_bg)
+    } else {
+        None
+    };
+
+    if let Some(fill) = fill {
+        ui.painter().rect_filled(rect, Rounding::ZERO, fill);
+    }
+
+    if is_current {
+        let marker =
+            egui::Rect::from_min_size(rect.min, Vec2::new(ACTIVE_MARKER_WIDTH, rect.height()));
+        ui.painter()
+            .rect_filled(marker, Rounding::ZERO, colors.accent);
+    }
+
+    if is_focused {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            Rounding::same(radius::XS),
+            egui::Stroke::new(FOCUS_STROKE_WIDTH, colors.accent),
+        );
     }
 }
 
@@ -120,17 +179,25 @@ impl TocPanel {
         }
 
         // Pre-compute colors once per render (not per entry)
-        let colors = TocColors::new(is_dark);
+        let colors = ThemeColors::new(is_dark);
 
         if toc.is_empty() {
-            ui.add_space(16.0);
+            ui.add_space(space::LG);
             ui.horizontal(|ui| {
-                ui.add_space(16.0);
-                ui.label(
-                    egui::RichText::new("No headings")
-                        .color(colors.text_disabled)
-                        .italics(),
-                );
+                ui.add_space(space::LG);
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("No headings")
+                            .color(colors.text_muted)
+                            .italics(),
+                    );
+                    ui.add_space(space::XXS);
+                    ui.label(
+                        egui::RichText::new("Headings in the document appear here.")
+                            .color(colors.text_muted)
+                            .small(),
+                    );
+                });
             });
             return None;
         }
@@ -139,14 +206,17 @@ impl TocPanel {
 
         // Render search input field with expand/collapse buttons
         ui.horizontal(|ui| {
-            ui.add_space(8.0);
-            let button_width = 40.0; // space for two small buttons
+            ui.add_space(space::SM);
+            let field_width =
+                (ui.available_width() - space::LG - HEADER_BUTTON_WIDTH).max(MIN_FILTER_WIDTH);
             let search_field = egui::TextEdit::singleline(&mut self.search_query)
-                .hint_text("Filter...")
-                .desired_width(ui.available_width() - 16.0 - button_width)
-                .font(egui::FontId::proportional(12.0))
-                .margin(egui::Margin::symmetric(6.0, 4.0));
-            let response = ui.add(search_field);
+                .hint_text("Filter headings")
+                .desired_width(field_width)
+                .font(egui::FontId::proportional(FILTER_FONT_SIZE))
+                .margin(egui::Margin::symmetric(6.0, space::XS));
+            let response = ui
+                .add(search_field)
+                .on_hover_text("Filter the table of contents");
 
             if self.request_search_focus {
                 response.request_focus();
@@ -162,27 +232,37 @@ impl TocPanel {
             let btn_color = colors.text_muted;
             if ui
                 .add(
-                    egui::Button::new(egui::RichText::new("+").size(12.0).color(btn_color))
-                        .frame(false),
+                    egui::Button::new(
+                        egui::RichText::new(icon::PLUS)
+                            .size(FILTER_FONT_SIZE)
+                            .color(btn_color),
+                    )
+                    .frame(false),
                 )
-                .on_hover_text("Expand all")
+                .on_hover_text("Expand all headings")
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
             {
                 self.expand_all();
             }
             if ui
                 .add(
-                    egui::Button::new(egui::RichText::new("-").size(12.0).color(btn_color))
-                        .frame(false),
+                    egui::Button::new(
+                        egui::RichText::new(icon::MINUS)
+                            .size(FILTER_FONT_SIZE)
+                            .color(btn_color),
+                    )
+                    .frame(false),
                 )
-                .on_hover_text("Collapse all")
+                .on_hover_text("Collapse all headings")
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
             {
                 self.collapse_all();
             }
-            ui.add_space(4.0);
+            ui.add_space(space::XS);
         });
-        ui.add_space(4.0);
+        ui.add_space(space::XS);
 
         // Build set of matching entry indices for the current search query (cached)
         let matching_indices: Option<Vec<bool>> = if self.search_query.is_empty() {
@@ -251,7 +331,7 @@ impl TocPanel {
             // Virtualized list: render only visible TOC rows for smoother scrolling.
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .show_rows(ui, 28.0, rows.len(), |ui, row_range| {
+                .show_rows(ui, ROW_HEIGHT, rows.len(), |ui, row_range| {
                     for row_idx in row_range {
                         let Some(row) = rows.get(row_idx) else {
                             continue;
@@ -280,7 +360,7 @@ impl TocPanel {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.add_space(4.0);
+                    ui.add_space(space::XS);
                     for entry in &toc.entries {
                         if let Some(idx) = self.render_entry(
                             ui,
@@ -295,7 +375,7 @@ impl TocPanel {
                             self.focused_index = Some(idx);
                         }
                     }
-                    ui.add_space(16.0);
+                    ui.add_space(space::LG);
                 });
         }
 
@@ -351,50 +431,35 @@ impl TocPanel {
         has_children: bool,
         current_heading: Option<usize>,
         focused_index: Option<usize>,
-        colors: &TocColors,
+        colors: &ThemeColors,
     ) -> Option<usize> {
         let mut clicked = None;
-        let base_indent = 16.0;
-        let indent = base_indent + (depth as f32 * 12.0);
+        let indent = BASE_INDENT + (depth as f32 * INDENT_PER_LEVEL);
         let is_current = current_heading == Some(entry.index);
         let is_focused = focused_index == Some(entry.index);
         let mut collapsed = self.collapsed.get(entry.index).copied().unwrap_or(false);
-        let item_height = 28.0;
+        let item_height = ROW_HEIGHT;
 
         let (rect, response) = ui.allocate_exact_size(
             Vec2::new(ui.available_width(), item_height),
             egui::Sense::click(),
         );
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
         let is_hovered = response.hovered();
-        if is_current {
-            let indicator_rect = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, item_height));
-            ui.painter()
-                .rect_filled(indicator_rect, Rounding::ZERO, colors.accent);
-            ui.painter()
-                .rect_filled(rect, Rounding::ZERO, colors.bg_hover);
-        } else if is_focused {
-            ui.painter().rect_stroke(
-                rect.shrink(1.0),
-                Rounding::same(2.0),
-                egui::Stroke::new(1.0, colors.accent),
-            );
-            ui.painter()
-                .rect_filled(rect, Rounding::ZERO, colors.bg_elevated);
-        } else if is_hovered {
-            ui.painter()
-                .rect_filled(rect, Rounding::ZERO, colors.bg_elevated);
-        }
+        paint_row_states(ui, rect, colors, is_current, is_focused, is_hovered);
 
         if has_children {
-            let toggle_text = if collapsed { "\u{25B6}" } else { "\u{25BC}" };
-            let toggle_pos = rect.min + Vec2::new(indent - 14.0, item_height / 2.0);
-            let toggle_rect = egui::Rect::from_center_size(toggle_pos, Vec2::splat(16.0));
-            let toggle_response = ui.interact(
-                toggle_rect,
-                ui.id().with(("toggle", entry.index)),
-                egui::Sense::click(),
-            );
+            let toggle_pos = rect.min + Vec2::new(indent - TOGGLE_OFFSET, item_height / 2.0);
+            let toggle_rect =
+                egui::Rect::from_center_size(toggle_pos, Vec2::splat(TOGGLE_HIT_SIZE));
+            let toggle_response = ui
+                .interact(
+                    toggle_rect,
+                    ui.id().with(("toggle", entry.index)),
+                    egui::Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
 
             let toggle_color = if toggle_response.hovered() {
                 colors.text_primary
@@ -402,13 +467,7 @@ impl TocPanel {
                 colors.text_muted
             };
 
-            ui.painter().text(
-                toggle_pos,
-                egui::Align2::CENTER_CENTER,
-                toggle_text,
-                egui::FontId::proportional(11.0),
-                toggle_color,
-            );
+            paint_disclosure_triangle(ui, toggle_pos, collapsed, toggle_color);
 
             if toggle_response.clicked() {
                 collapsed = !collapsed;
@@ -427,12 +486,8 @@ impl TocPanel {
             colors.text_secondary
         };
 
-        let font_size = match entry.level {
-            1 => 13.0,
-            2 => 12.5,
-            _ => 12.0,
-        };
-        let max_text_width = rect.width() - indent - 16.0;
+        let font_size = heading_font_size(entry.level);
+        let max_text_width = rect.width() - indent - TEXT_TRAILING_PAD;
         let text = truncate_text(&entry.text, max_text_width, font_size);
 
         ui.painter().text(
@@ -533,7 +588,7 @@ impl TocPanel {
         current_heading: Option<usize>,
         focused_index: Option<usize>,
         depth: usize,
-        colors: &TocColors,
+        colors: &ThemeColors,
         matching_indices: Option<&[bool]>,
     ) -> Option<usize> {
         // When filtering, check if this entry or any descendant matches
@@ -550,8 +605,7 @@ impl TocPanel {
         }
 
         let mut clicked = None;
-        let base_indent = 16.0;
-        let indent = base_indent + (depth as f32 * 12.0);
+        let indent = BASE_INDENT + (depth as f32 * INDENT_PER_LEVEL);
         let is_current = current_heading == Some(entry.index);
         let is_focused = focused_index == Some(entry.index);
         let has_children = !entry.children.is_empty();
@@ -567,52 +621,38 @@ impl TocPanel {
         let is_dimmed = matching_indices.is_some() && !is_match;
 
         // Calculate item height
-        let item_height = 28.0;
+        let item_height = ROW_HEIGHT;
 
         // Allocate space for the item
         let (rect, response) = ui.allocate_exact_size(
             Vec2::new(ui.available_width(), item_height),
             egui::Sense::click(),
         );
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
         let is_hovered = response.hovered();
-
-        // Draw background for current/hovered/focused state
-        if is_current && !is_dimmed {
-            // Active indicator line on the left
-            let indicator_rect = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, item_height));
-            ui.painter()
-                .rect_filled(indicator_rect, Rounding::ZERO, colors.accent);
-
-            // Subtle background
-            ui.painter()
-                .rect_filled(rect, Rounding::ZERO, colors.bg_hover);
-        } else if is_focused {
-            // Focus indicator - dotted border effect
-            ui.painter().rect_stroke(
-                rect.shrink(1.0),
-                Rounding::same(2.0),
-                egui::Stroke::new(1.0, colors.accent),
-            );
-            ui.painter()
-                .rect_filled(rect, Rounding::ZERO, colors.bg_elevated);
-        } else if is_hovered {
-            ui.painter()
-                .rect_filled(rect, Rounding::ZERO, colors.bg_elevated);
-        }
+        paint_row_states(
+            ui,
+            rect,
+            colors,
+            is_current && !is_dimmed,
+            is_focused,
+            is_hovered,
+        );
 
         // Collapse toggle for entries with children (uses cached collapsed value)
         if has_children {
-            let toggle_text = if collapsed { "\u{25B6}" } else { "\u{25BC}" };
+            let toggle_pos = rect.min + Vec2::new(indent - TOGGLE_OFFSET, item_height / 2.0);
+            let toggle_rect =
+                egui::Rect::from_center_size(toggle_pos, Vec2::splat(TOGGLE_HIT_SIZE));
 
-            let toggle_pos = rect.min + Vec2::new(indent - 14.0, item_height / 2.0);
-            let toggle_rect = egui::Rect::from_center_size(toggle_pos, Vec2::splat(16.0));
-
-            let toggle_response = ui.interact(
-                toggle_rect,
-                ui.id().with(("toggle", entry.index)),
-                egui::Sense::click(),
-            );
+            let toggle_response = ui
+                .interact(
+                    toggle_rect,
+                    ui.id().with(("toggle", entry.index)),
+                    egui::Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
 
             let toggle_color = if is_dimmed {
                 colors.text_disabled
@@ -622,13 +662,7 @@ impl TocPanel {
                 colors.text_muted
             };
 
-            ui.painter().text(
-                toggle_pos,
-                egui::Align2::CENTER_CENTER,
-                toggle_text,
-                egui::FontId::proportional(11.0),
-                toggle_color,
-            );
+            paint_disclosure_triangle(ui, toggle_pos, collapsed, toggle_color);
 
             if toggle_response.clicked() {
                 collapsed = !collapsed;
@@ -649,14 +683,10 @@ impl TocPanel {
             colors.text_secondary
         };
 
-        let font_size = match entry.level {
-            1 => 13.0,
-            2 => 12.5,
-            _ => 12.0,
-        };
+        let font_size = heading_font_size(entry.level);
 
         // Truncate text if needed
-        let max_text_width = rect.width() - indent - 16.0;
+        let max_text_width = rect.width() - indent - TEXT_TRAILING_PAD;
         let text = truncate_text(&entry.text, max_text_width, font_size);
 
         ui.painter().text(

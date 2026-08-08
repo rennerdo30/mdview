@@ -536,6 +536,13 @@ impl PdfExporter {
                 self.table_header.clear();
             }
             TagEnd::TableHead => {
+                // pulldown-cmark puts the header cells directly inside `TableHead`; there is
+                // no `TableRow` event around them, so the collected cells have to be flushed
+                // here or the header row is dropped entirely.
+                let row = std::mem::take(&mut self.table_row);
+                if !row.is_empty() {
+                    self.table_header = row;
+                }
                 self.in_table_head = false;
             }
             TagEnd::TableRow => {

@@ -17,6 +17,7 @@ use crate::annotations::model::{Annotation, AnnotationKind};
 use crate::annotations::AnnotationStore;
 use crate::config::defaults::heading_size_multiplier;
 use crate::config::Config;
+use crate::theme::style::{radius, space, ThemeColors};
 
 /// Maximum number of images to cache (LRU eviction when exceeded)
 const IMAGE_CACHE_MAX_SIZE: usize = 50;
@@ -97,41 +98,32 @@ fn parse_config_hex_color(hex: &str) -> Color32 {
     crate::theme::style::parse_hex_color(hex)
 }
 
-/// Theme-aware colors for markdown rendering
+/// Theme-aware colors for markdown rendering, resolved from the shared theme tokens so
+/// content colours stay in step with the chrome.
 mod theme_colors {
+    use crate::theme::style::ThemeColors;
     use egui::Color32;
 
     pub fn code_block_bg(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(30, 35, 45)
-        } else {
-            Color32::from_rgb(245, 247, 250)
-        }
+        ThemeColors::new(is_dark).code_bg
     }
 
     pub fn inline_code_text(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(206, 145, 120)
-        } else {
-            Color32::from_rgb(180, 80, 80)
-        }
+        ThemeColors::new(is_dark).code_text
     }
 
     pub fn code_line_number(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(100, 110, 130)
-        } else {
-            Color32::from_rgb(150, 155, 165)
-        }
+        ThemeColors::new(is_dark).code_line_number
     }
 
     pub fn link_color(is_dark: bool) -> Color32 {
-        if is_dark {
-            Color32::from_rgb(78, 201, 176)
-        } else {
-            Color32::from_rgb(0, 120, 150)
-        }
+        ThemeColors::new(is_dark).accent
     }
+}
+
+/// Colour of a footnote reference/marker.
+fn footnote_marker_color(is_dark: bool) -> Color32 {
+    ThemeColors::new(is_dark).accent
 }
 
 /// Estimated height of a single line of text in egui (used for viewport culling estimates).
@@ -142,6 +134,8 @@ const ESTIMATED_LINE_HEIGHT: f32 = 22.4;
 /// Slightly narrow to produce conservative (taller) height estimates — overestimates cause
 /// less visible layout shift than underestimates when blocks transition from culled to rendered.
 const ESTIMATED_CHAR_WIDTH: f32 = 7.0;
+/// Width of the vertical bar drawn next to a blockquote
+const QUOTE_BAR_WIDTH: f32 = 3.0;
 const INLINE_CODE_MARKER: char = '\x00';
 const FOOTNOTE_MARKER: char = '\x01';
 const LINK_MARKER: char = '\x02';
@@ -1828,6 +1822,13 @@ impl MarkdownRenderer {
                 self.table_rows.clear();
             }
             TagEnd::TableHead => {
+                // pulldown-cmark puts the header cells directly inside `TableHead`; there is
+                // no `TableRow` event around them, so the collected cells have to be flushed
+                // here or the header row is dropped entirely.
+                let row = std::mem::take(&mut self.table_row);
+                if !row.is_empty() {
+                    self.table_header = row;
+                }
                 self.in_table_head = false;
             }
             TagEnd::TableRow => {
@@ -2266,18 +2267,17 @@ impl MarkdownRenderer {
             && !text.contains(LINK_MARKER)
             && !text.contains(LINK_END_MARKER)
         {
+            let colors = ThemeColors::from_ui(ui);
             ui.horizontal_wrapped(|ui| {
                 let mut current_offset = style.start_offset;
                 for part in text.split(INLINE_CODE_MARKER) {
                     if let Some(code) = part.strip_prefix("CODE:") {
-                        let text_color = style
-                            .code_text_color
-                            .unwrap_or(Color32::from_rgb(206, 145, 120));
+                        let text_color = style.code_text_color.unwrap_or(colors.code_text);
                         let mut code_text = RichText::new(code)
                             .size(style.base_font_size * 0.9)
                             .monospace()
                             .color(text_color)
-                            .background_color(Color32::from_gray(50));
+                            .background_color(colors.code_bg);
                         if style.in_strikethrough {
                             code_text = code_text.strikethrough();
                         }
@@ -2313,19 +2313,18 @@ impl MarkdownRenderer {
         ui.horizontal_wrapped(|ui| {
             let mut current_offset = style.start_offset;
             let is_dark = ui.visuals().dark_mode;
+            let colors = ThemeColors::new(is_dark);
 
             // Split on inline code markers - use iterator directly (no allocation)
             for part in text.split(INLINE_CODE_MARKER) {
                 if let Some(code) = part.strip_prefix("CODE:") {
                     // Apply code_text color from config if specified, otherwise use default
-                    let text_color = style
-                        .code_text_color
-                        .unwrap_or(Color32::from_rgb(206, 145, 120));
+                    let text_color = style.code_text_color.unwrap_or(colors.code_text);
                     let mut code_text = RichText::new(code)
                         .size(style.base_font_size * 0.9)
                         .monospace()
                         .color(text_color)
-                        .background_color(Color32::from_gray(50));
+                        .background_color(colors.code_bg);
                     if style.in_strikethrough {
                         code_text = code_text.strikethrough();
                     }
@@ -2347,7 +2346,7 @@ impl MarkdownRenderer {
                                 // Render as superscript number
                                 let superscript = RichText::new(format!("[{}]", num_str))
                                     .size(style.base_font_size * 0.75)
-                                    .color(Color32::from_rgb(78, 201, 176))
+                                    .color(footnote_marker_color(is_dark))
                                     .raised();
                                 ui.label(superscript);
                             }
@@ -2458,8 +2457,9 @@ impl MarkdownRenderer {
             return;
         }
 
-        let bar_width = 3.0;
-        let bar_spacing = 12.0;
+        let colors = ThemeColors::from_ui(ui);
+        let bar_width = QUOTE_BAR_WIDTH;
+        let bar_spacing = space::MD;
         let indent = bar_width + bar_spacing;
 
         // Render text in an indented sub-region so it wraps within the available width
@@ -2478,7 +2478,7 @@ impl MarkdownRenderer {
                         let quote_text = RichText::new(&text)
                             .size(base_font_size)
                             .italics()
-                            .color(Color32::from_gray(180));
+                            .color(colors.quote_text);
 
                         let quote_start = self.char_offset.saturating_sub(text.len());
                         let quote_end = self.char_offset;
@@ -2487,7 +2487,7 @@ impl MarkdownRenderer {
                             egui::Label::new(quote_text).wrap_mode(egui::TextWrapMode::Wrap),
                             quote_start,
                             quote_end,
-                            Color32::from_gray(180),
+                            colors.quote_text,
                             Stroke::NONE,
                         );
                     },
@@ -2501,9 +2501,9 @@ impl MarkdownRenderer {
             Vec2::new(bar_width, response.response.rect.height()),
         );
         ui.painter()
-            .rect_filled(bar_rect, 0.0, Color32::from_gray(100));
+            .rect_filled(bar_rect, radius::XS, colors.quote_bar);
 
-        ui.add_space(8.0);
+        ui.add_space(space::SM);
     }
 
     fn render_code_block(&mut self, ui: &mut Ui, config: &Config) {
@@ -3404,10 +3404,13 @@ impl MarkdownRenderer {
             return;
         }
 
+        let colors = ThemeColors::from_ui(ui);
+
         egui::Frame::none()
-            .fill(Color32::from_gray(35))
-            .rounding(4.0)
-            .inner_margin(egui::Margin::same(8.0))
+            .fill(colors.code_bg)
+            .stroke(Stroke::new(1.0, colors.border_subtle))
+            .rounding(radius::MD)
+            .inner_margin(egui::Margin::same(space::SM))
             .show(ui, |ui| {
                 egui::Grid::new(format!("markdown_table_{}", self.table_count))
                     .num_columns(num_cols)
@@ -3426,7 +3429,7 @@ impl MarkdownRenderer {
                                 let text = RichText::new(cell)
                                     .size(base_font_size)
                                     .strong()
-                                    .color(Color32::from_gray(220));
+                                    .color(colors.text_primary);
 
                                 match alignment {
                                     Alignment::Left | Alignment::None => {
@@ -3471,7 +3474,7 @@ impl MarkdownRenderer {
 
                                 let text = RichText::new(cell)
                                     .size(base_font_size)
-                                    .color(Color32::from_gray(180));
+                                    .color(colors.text_secondary);
 
                                 match alignment {
                                     Alignment::Left | Alignment::None => {
@@ -3741,18 +3744,20 @@ impl MarkdownRenderer {
     }
 
     fn render_footnote_definitions(&self, ui: &mut Ui, base_font_size: f32) {
-        ui.add_space(24.0);
+        let colors = ThemeColors::from_ui(ui);
+
+        ui.add_space(space::XL);
         ui.separator();
-        ui.add_space(8.0);
+        ui.add_space(space::SM);
 
         ui.label(
             RichText::new("Footnotes")
                 .size(base_font_size * 0.9)
                 .strong()
-                .color(Color32::from_gray(150)),
+                .color(colors.text_muted),
         );
 
-        ui.add_space(8.0);
+        ui.add_space(space::SM);
 
         for (name, text) in &self.footnote_definitions {
             let num = self.footnote_counter.get(name).copied().unwrap_or(0);
@@ -3761,12 +3766,12 @@ impl MarkdownRenderer {
                     RichText::new(format!("{}.", num))
                         .size(base_font_size * 0.85)
                         .strong()
-                        .color(Color32::from_rgb(78, 201, 176)),
+                        .color(colors.accent),
                 );
-                ui.add_space(4.0);
+                ui.add_space(space::XS);
                 ui.label(RichText::new(text).size(base_font_size * 0.9));
             });
-            ui.add_space(4.0);
+            ui.add_space(space::XS);
         }
     }
 }
