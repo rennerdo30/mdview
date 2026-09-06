@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use egui::{RichText, Rounding, Vec2};
 
-use crate::theme::style::palette;
+use crate::theme::style::{icon, radius, space, ThemeColors};
 
 /// State for folder browsing
 #[derive(Debug, Clone, Default)]
@@ -128,7 +128,22 @@ const MAX_SCAN_DEPTH: usize = 32;
 /// Hard cap for scanned entries to avoid freezing on very large trees
 const MAX_SCANNED_ENTRIES: usize = 20_000;
 /// Approximate row height used by the virtualized file list
-const FILE_BROWSER_ROW_HEIGHT: f32 = 24.0;
+const FILE_BROWSER_ROW_HEIGHT: f32 = 26.0;
+/// Horizontal indent added per tree level
+const FILE_BROWSER_INDENT: f32 = space::LG;
+/// Left padding before the row icon
+const ROW_PADDING_LEFT: f32 = space::SM;
+/// Gap between icon and file name
+const ICON_TEXT_GAP: f32 = 20.0;
+/// Width of the accent bar marking the open file
+const ACTIVE_MARKER_WIDTH: f32 = 3.0;
+/// Font size of the row icon
+const ICON_FONT_SIZE: f32 = 12.0;
+/// Font size of the file name
+const NAME_FONT_SIZE: f32 = 13.0;
+/// Approximate width of one glyph relative to the font size, used to decide when a name
+/// needs shortening.
+const AVG_GLYPH_RATIO: f32 = 0.55;
 const IGNORED_DIRECTORIES: &[&str] = &[
     ".git",
     "node_modules",
@@ -282,22 +297,32 @@ impl FileBrowserPanel {
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
 
+        let colors = ThemeColors::from_ui(ui);
+        let root_path_label = folder_state
+            .root_path
+            .as_ref()
+            .map(|p| p.display().to_string());
+
         // Header with folder name
         if let Some(name) = folder_name {
             ui.horizontal(|ui| {
-                ui.add_space(8.0);
+                ui.add_space(space::SM);
 
-                ui.label(
-                    RichText::new(format!("\u{1F4C1} {}", name))
-                        .color(palette::TEXT_PRIMARY)
+                let header = ui.label(
+                    RichText::new(format!("{} {}", icon::FOLDER, name))
+                        .color(colors.text_primary)
                         .strong(),
                 );
+                if let Some(path) = root_path_label.as_deref() {
+                    header.on_hover_text(path);
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Close button
                     if ui
-                        .small_button("\u{2715}")
+                        .small_button(icon::CLOSE)
                         .on_hover_text("Close folder")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         should_close = true;
@@ -305,8 +330,9 @@ impl FileBrowserPanel {
 
                     // Refresh button
                     if ui
-                        .small_button("\u{21BB}")
-                        .on_hover_text("Refresh")
+                        .small_button(icon::REFRESH)
+                        .on_hover_text("Rescan folder for new files")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         should_refresh = true;
@@ -314,14 +340,28 @@ impl FileBrowserPanel {
                 });
             });
 
-            ui.add_space(4.0);
+            ui.add_space(space::XS);
             ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(space::XS);
         }
 
         // File list
         {
             let visible_entries = folder_state.visible_entries();
+
+            if visible_entries.is_empty() {
+                ui.add_space(space::SM);
+                ui.horizontal(|ui| {
+                    ui.add_space(space::SM);
+                    ui.label(
+                        RichText::new("No markdown files in this folder")
+                            .color(colors.text_muted)
+                            .italics(),
+                    );
+                });
+                return None;
+            }
+
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_rows(
@@ -336,8 +376,14 @@ impl FileBrowserPanel {
                                 .map(|f| f == entry.path.as_path())
                                 .unwrap_or(false);
 
-                            let response =
-                                self.render_entry_data(ui, entry, idx, is_expanded, is_current);
+                            let response = self.render_entry_data(
+                                ui,
+                                entry,
+                                idx,
+                                is_expanded,
+                                is_current,
+                                &colors,
+                            );
 
                             if response.clicked() {
                                 if entry.is_dir {
@@ -367,6 +413,7 @@ impl FileBrowserPanel {
         file_to_open
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_entry_data(
         &mut self,
         ui: &mut egui::Ui,
@@ -374,78 +421,112 @@ impl FileBrowserPanel {
         idx: usize,
         is_expanded: bool,
         is_current: bool,
+        colors: &ThemeColors,
     ) -> egui::Response {
-        let indent = entry.depth as f32 * 16.0;
+        let indent = entry.depth as f32 * FILE_BROWSER_INDENT;
         let height = FILE_BROWSER_ROW_HEIGHT;
 
         let (rect, response) = ui.allocate_exact_size(
             Vec2::new(ui.available_width(), height),
             egui::Sense::click(),
         );
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
         let is_hovered = response.hovered();
         if is_hovered {
             self.hovered_idx = Some(idx);
         }
 
-        // Background
+        // Background first, then the active marker on top of it.
         let bg_color = if is_current {
-            palette::BG_ACTIVE
+            colors.active_bg
         } else if is_hovered {
-            palette::BG_HOVER
+            colors.hover_bg
         } else {
             egui::Color32::TRANSPARENT
         };
 
         if bg_color != egui::Color32::TRANSPARENT {
             ui.painter()
-                .rect_filled(rect, Rounding::same(4.0), bg_color);
+                .rect_filled(rect, Rounding::same(radius::SM), bg_color);
         }
 
-        // Selection indicator
         if is_current {
-            let indicator_rect = egui::Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height()));
+            let marker =
+                egui::Rect::from_min_size(rect.min, Vec2::new(ACTIVE_MARKER_WIDTH, rect.height()));
             ui.painter()
-                .rect_filled(indicator_rect, Rounding::same(1.0), palette::ACCENT);
+                .rect_filled(marker, Rounding::same(radius::XS), colors.accent);
         }
 
         // Icon and text
-        let text_start = rect.min + Vec2::new(8.0 + indent, (rect.height() - 14.0) / 2.0);
+        let text_start = rect.min
+            + Vec2::new(
+                ROW_PADDING_LEFT + indent,
+                (rect.height() - NAME_FONT_SIZE) / 2.0,
+            );
 
         let (icon, icon_color) = if entry.is_dir {
             if is_expanded {
-                ("\u{1F4C2}", palette::ACCENT) // Open folder
+                (icon::FOLDER_OPEN, colors.accent)
             } else {
-                ("\u{1F4C1}", palette::TEXT_MUTED) // Closed folder
+                (icon::FOLDER, colors.text_muted)
             }
         } else {
-            ("\u{1F4C4}", palette::TEXT_SECONDARY) // Document
+            (icon::DOCUMENT, colors.text_secondary)
         };
 
         ui.painter().text(
             text_start,
             egui::Align2::LEFT_TOP,
             icon,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(ICON_FONT_SIZE),
             icon_color,
         );
 
         let text_color = if is_current || is_hovered {
-            palette::TEXT_PRIMARY
+            colors.text_primary
         } else {
-            palette::TEXT_SECONDARY
+            colors.text_secondary
         };
 
+        let available_text_width =
+            rect.width() - (ROW_PADDING_LEFT + indent + ICON_TEXT_GAP + space::SM);
+        let display_name = shorten_middle(&entry.name, available_text_width, NAME_FONT_SIZE);
+
         ui.painter().text(
-            text_start + Vec2::new(20.0, 0.0),
+            text_start + Vec2::new(ICON_TEXT_GAP, 0.0),
             egui::Align2::LEFT_TOP,
-            &entry.name,
-            egui::FontId::proportional(13.0),
+            display_name.as_ref(),
+            egui::FontId::proportional(NAME_FONT_SIZE),
             text_color,
         );
 
-        response
+        // Always offer the full path: names are shortened when the panel is narrow.
+        response.on_hover_text(entry.path.display().to_string())
     }
+}
+
+/// Shorten a file name to fit `max_width`, keeping the extension visible by cutting out the
+/// middle (`long-report-name.md` -> `long-re\u{2026}rt.md`).
+fn shorten_middle(name: &str, max_width: f32, font_size: f32) -> std::borrow::Cow<'_, str> {
+    let max_chars = (max_width / (font_size * AVG_GLYPH_RATIO)).floor();
+    if max_chars <= 0.0 {
+        return std::borrow::Cow::Borrowed("");
+    }
+    let max_chars = max_chars as usize;
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= max_chars || max_chars < 5 {
+        return std::borrow::Cow::Borrowed(name);
+    }
+
+    let keep = max_chars - 1; // room for the ellipsis
+    let tail = keep / 2;
+    let head = keep - tail;
+    let mut out = String::with_capacity(max_chars + 3);
+    out.extend(chars[..head].iter());
+    out.push_str(icon::ELLIPSIS);
+    out.extend(chars[chars.len() - tail..].iter());
+    std::borrow::Cow::Owned(out)
 }
 
 impl Default for FileBrowserPanel {

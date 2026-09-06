@@ -3,6 +3,18 @@
 use egui::{Color32, Pos2, Rect, RichText, Ui, Vec2};
 
 use super::model::{AnnotationKind, AnnotationStore};
+use crate::theme::style::{radius, space, ThemeColors};
+
+/// Minimum width of the annotation popup
+const POPUP_MIN_WIDTH: f32 = 220.0;
+/// Size of a highlight colour swatch
+const SWATCH_SIZE: f32 = 18.0;
+/// Stroke width of the selected swatch outline
+const SWATCH_SELECTED_STROKE: f32 = 2.0;
+/// Size of a margin annotation icon
+const MARGIN_ICON_SIZE: f32 = 20.0;
+/// Horizontal position of the margin annotation icons
+const MARGIN_ICON_X: f32 = 5.0;
 
 /// Predefined highlight colors
 pub const HIGHLIGHT_COLORS: &[(&str, &str)] = &[
@@ -80,14 +92,23 @@ impl AnnotationPopup {
             .fixed_pos(self.position)
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(200.0);
+                    let colors = ThemeColors::from_ui(ui);
+                    ui.set_min_width(POPUP_MIN_WIDTH);
 
-                    ui.label(RichText::new("Add Annotation").strong());
+                    ui.label(RichText::new("Add annotation").strong());
                     ui.separator();
 
                     // Highlight button with color picker
                     ui.horizontal(|ui| {
-                        if ui.button("Highlight").clicked() {
+                        let selected_name = HIGHLIGHT_COLORS
+                            .get(self.selected_color)
+                            .map(|(_, name)| *name)
+                            .unwrap_or_default();
+                        if ui
+                            .button("Highlight")
+                            .on_hover_text(format!("Highlight the selection ({selected_name})"))
+                            .clicked()
+                        {
                             let color = HIGHLIGHT_COLORS[self.selected_color].0;
                             action = Some(AnnotationAction::CreateHighlight(
                                 self.selection.0,
@@ -97,25 +118,36 @@ impl AnnotationPopup {
                             self.hide();
                         }
 
-                        // Color buttons
-                        for (idx, (color, _name)) in HIGHLIGHT_COLORS.iter().enumerate() {
+                        // Colour swatches keep a fixed size so the row does not jump when the
+                        // selection changes; the selected one is marked with an outline.
+                        for (idx, (color, name)) in HIGHLIGHT_COLORS.iter().enumerate() {
                             let color32 = parse_hex_color(color);
                             let is_selected = idx == self.selected_color;
 
-                            let size = if is_selected { 20.0 } else { 16.0 };
-                            let (rect, response) =
-                                ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+                            let (rect, response) = ui.allocate_exact_size(
+                                Vec2::splat(SWATCH_SIZE),
+                                egui::Sense::click(),
+                            );
+                            let response = response
+                                .on_hover_text(*name)
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
 
                             if response.clicked() {
                                 self.selected_color = idx;
                             }
 
-                            ui.painter().rect_filled(rect, 2.0, color32);
+                            ui.painter().rect_filled(rect, radius::XS, color32);
                             if is_selected {
                                 ui.painter().rect_stroke(
+                                    rect.expand(SWATCH_SELECTED_STROKE),
+                                    radius::SM,
+                                    egui::Stroke::new(SWATCH_SELECTED_STROKE, colors.accent),
+                                );
+                            } else if response.hovered() {
+                                ui.painter().rect_stroke(
                                     rect,
-                                    2.0,
-                                    egui::Stroke::new(2.0, Color32::WHITE),
+                                    radius::XS,
+                                    egui::Stroke::new(1.0, colors.border_strong),
                                 );
                             }
                         }
@@ -124,11 +156,20 @@ impl AnnotationPopup {
                     ui.separator();
 
                     // Note input
-                    ui.label("Add note:");
-                    ui.text_edit_multiline(&mut self.note_text);
+                    ui.label("Note");
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.note_text)
+                            .hint_text("Write a note for the selection"),
+                    );
+
+                    ui.add_space(space::XS);
 
                     ui.horizontal(|ui| {
-                        if ui.button("Add Note").clicked() && !self.note_text.is_empty() {
+                        let has_note = !self.note_text.trim().is_empty();
+                        let add_note = ui
+                            .add_enabled(has_note, egui::Button::new("Add note"))
+                            .on_disabled_hover_text("Type a note first");
+                        if add_note.clicked() {
                             action = Some(AnnotationAction::CreateNote(
                                 self.selection.0,
                                 self.selection.1,
@@ -137,7 +178,7 @@ impl AnnotationPopup {
                             self.hide();
                         }
 
-                        if ui.button("Cancel").clicked() {
+                        if ui.button("Cancel").on_hover_text("Discard (Esc)").clicked() {
                             self.hide();
                         }
                     });
@@ -187,9 +228,12 @@ pub fn render_margin_icons(
                 AnnotationKind::Bookmark => "🔖",
             };
 
-            let rect = Rect::from_min_size(Pos2::new(5.0, y), Vec2::new(20.0, 20.0));
+            let rect =
+                Rect::from_min_size(Pos2::new(MARGIN_ICON_X, y), Vec2::splat(MARGIN_ICON_SIZE));
 
-            let response = ui.put(rect, egui::Label::new(icon).sense(egui::Sense::click()));
+            let response = ui
+                .put(rect, egui::Label::new(icon).sense(egui::Sense::click()))
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
 
             if response.clicked() {
                 clicked_id = Some(annotation.id.clone());
